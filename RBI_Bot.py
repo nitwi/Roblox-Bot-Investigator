@@ -1,4 +1,4 @@
-# RBI Bot v0.15 [Beta]
+# RBI Bot v0.15-beta
 
 import os
 import time
@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.15 [Beta]"
+BOT_VERSION = "v0.15-beta"
 
 # ------ CONFIG ------
 
