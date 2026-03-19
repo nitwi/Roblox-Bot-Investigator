@@ -1,10 +1,12 @@
-# RBI Bot v0.15-beta
+# RBI Bot v0.16-beta
 
 import os
 import time
 import asyncio
 import requests
 import discord
+import uuid
+import re
 from discord import app_commands
 from dotenv import load_dotenv
 from datetime import datetime, timezone
@@ -12,7 +14,7 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.15 [Beta]"
+BOT_VERSION = "v0.16 [Beta]"
 
 # ------ CONFIG ------
 
@@ -76,13 +78,9 @@ SCAN_CACHE: dict[tuple[int, str, str, str | None, str], set[int]] = {}
 ACTIVE_SCAN_TOKENS: dict[int, str] = {}       # channel_id -> token
 RESCAN_IN_PROGRESS: dict[int, bool] = {}      # channel_id -> bool
 
-import uuid
-import re
-
 class ScanControl:
     def __init__(self):
         self.cancelled = False
-
 
 # ------ DISCORD CLIENT WITH APP COMMANDS (GLOBAL SYNC) ------
 
@@ -98,9 +96,7 @@ class RBIClient(discord.Client):
         for cmd in synced:
             print(f"[DEBUG] - /{cmd.name}")
 
-
 client = RBIClient()
-
 
 @client.event
 async def on_ready():
@@ -108,7 +104,6 @@ async def on_ready():
     print(f"RBI Bot version: {BOT_VERSION}")
     print("[DEBUG] Commands in tree:", [c.name for c in client.tree.walk_commands()])
     print("Slash commands are ready.")
-
 
 # ------ ROBLOX HELPERS ------
 
@@ -124,7 +119,6 @@ def get_user_id_from_username(username: str) -> int | None:
         return arr[0].get("id")
     except Exception:
         return None
-
 
 def get_user_basic_info(user_id: int) -> tuple[str | None, str | None, datetime | None]:
     url = f"https://users.roblox.com/v1/users/{user_id}"
@@ -146,7 +140,6 @@ def get_user_basic_info(user_id: int) -> tuple[str | None, str | None, datetime 
     except Exception:
         return None, None, None
 
-
 def format_join_date(dt: datetime | None) -> str:
     if dt is None:
         return "Unknown"
@@ -154,14 +147,12 @@ def format_join_date(dt: datetime | None) -> str:
     delta_years = (now - dt).days / 365.25
     return f"{dt.date().isoformat()} (~{delta_years:.1f} years ago)"
 
-
 def get_friends(user_id: int) -> list[dict]:
     url = FRIENDS_API.format(userId=user_id)
     r = requests.get(url, timeout=10)
     r.raise_for_status()
     data = r.json()
     return data.get("data", [])
-
 
 def get_avatar_assets(user_id: int) -> set[int]:
     url = AVATAR_API.format(userId=user_id)
@@ -171,7 +162,6 @@ def get_avatar_assets(user_id: int) -> set[int]:
     data = r.json()
     assets = data.get("assets", [])
     return {a.get("id") for a in assets if isinstance(a.get("id"), int)}
-
 
 def friend_matches_exact(
     friend_assets: set[int],
@@ -184,7 +174,6 @@ def friend_matches_exact(
         if ids.issubset(friend_assets):
             matched.append((label, len(ids), len(ids)))
     return matched
-
 
 def friend_matches_inexact(
     friend_assets: set[int],
@@ -199,7 +188,6 @@ def friend_matches_inexact(
             matched.append((label, len(overlap), len(ids)))
     return matched
 
-
 def resolve_combo_for_user(user_id: int, combo_name: str) -> tuple[str, set[int]] | None:
     user_key = str(user_id)
     lowered = combo_name.lower()
@@ -211,7 +199,6 @@ def resolve_combo_for_user(user_id: int, combo_name: str) -> tuple[str, set[int]
         return (f"{desc} (global)", GLOBAL_COMBOS[lowered])
     return None
 
-
 def place_to_universe(place_id: int) -> int | None:
     url = PLACE_TO_UNIVERSE_API.format(placeId=place_id)
     try:
@@ -222,7 +209,6 @@ def place_to_universe(place_id: int) -> int | None:
         return uni if isinstance(uni, int) else None
     except Exception:
         return None
-
 
 def get_user_badges(user_id: int, max_pages: int | None = None) -> list[dict]:
     badges: list[dict] = []
@@ -247,7 +233,6 @@ def get_user_badges(user_id: int, max_pages: int | None = None) -> list[dict]:
             break
         time.sleep(BADGE_REQUEST_DELAY)
     return badges
-
 
 def get_universe_badge_ids(universe_id: int, max_pages: int | None = None) -> set[int]:
     badge_ids: set[int] = set()
@@ -276,7 +261,6 @@ def get_universe_badge_ids(universe_id: int, max_pages: int | None = None) -> se
         time.sleep(BADGE_REQUEST_DELAY)
     return badge_ids
 
-
 def count_badges_for_universe(badges: list[dict], universe_badge_ids: set[int]) -> int:
     if not universe_badge_ids:
         return 0
@@ -286,7 +270,6 @@ def count_badges_for_universe(badges: list[dict], universe_badge_ids: set[int]) 
         if isinstance(bid, int) and bid in universe_badge_ids:
             count += 1
     return count
-
 
 def get_game_icon_url(universe_id: int) -> str | None:
     url = GAME_ICONS_API.format(universeId=universe_id)
@@ -302,7 +285,6 @@ def get_game_icon_url(universe_id: int) -> str | None:
     except Exception:
         return None
 
-
 def get_user_headshot_url(user_id: int) -> str | None:
     url = USER_HEADSHOT_API.format(userId=user_id)
     try:
@@ -317,14 +299,12 @@ def get_user_headshot_url(user_id: int) -> str | None:
     except Exception:
         return None
 
-
 def get_badge_target_for_game(user_id: int, game_key: str) -> int | None:
     user_key = str(user_id)
     k = (user_key, game_key.lower())
     if k in USER_BADGE_TARGETS:
         return USER_BADGE_TARGETS[k]
     return GLOBAL_BADGE_TARGETS.get(game_key.lower())
-
 
 def get_presence_for_users(user_ids: list[int]) -> tuple[dict[int, dict], bool]:
     """
@@ -350,7 +330,6 @@ def get_presence_for_users(user_ids: list[int]) -> tuple[dict[int, dict], bool]:
     except Exception:
         return {}, True
 
-
 def presence_label(p: dict | None) -> str:
     """
     Roblox presence mapping (userPresenceType):
@@ -375,6 +354,66 @@ def presence_label(p: dict | None) -> str:
 
     return "Unknown"
 
+def longest_common_substring(a: str, b: str) -> int:
+    a = a.lower()
+    b = b.lower()
+    if not a or not b:
+        return 0
+    # DP table of length of common suffixes
+    prev = [0] * (len(b) + 1)
+    best = 0
+    for i in range(1, len(a) + 1):
+        curr = [0] * (len(b) + 1)
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                curr[j] = prev[j - 1] + 1
+                if curr[j] > best:
+                    best = curr[j]
+        prev = curr
+    return best
+
+def peer_name_match_pct(
+    a_name: str,
+    a_display: str | None,
+    b_name: str,
+    b_display: str | None,
+) -> float:
+    # Reuse the same logic as target name matching,
+    # just treating one friend as the "target".
+    return name_match_percentage(
+        target_name=a_name,
+        friend_name=b_name,
+        friend_display=b_display,
+    )
+
+def name_match_percentage(target_name: str, friend_name: str | None, friend_display: str | None) -> float:
+    """
+    Returns a 0–100 percentage based on the longest consecutive sequence of
+    matching characters between the target's name and the friend's username
+    or display name. Uses the better of the two.
+    """
+    if not target_name:
+        return 0.0
+
+    t = target_name.lower()
+    best_len = 0
+
+    if friend_name:
+        best_len = max(best_len, longest_common_substring(t, friend_name))
+
+    if friend_display:
+        best_len = max(best_len, longest_common_substring(t, friend_display))
+
+    if best_len <= 0:
+        return 0.0
+
+    # Normalize by target length so longer overlaps matter more
+    pct = (best_len / len(t)) * 100.0
+    if pct < 0.0:
+        pct = 0.0
+    if pct > 100.0:
+        pct = 100.0
+    return pct
 
 def get_game_icon_for_entry(owner_key: str | None, game_key: str) -> str | None:
     """
@@ -387,7 +426,6 @@ def get_game_icon_for_entry(owner_key: str | None, game_key: str) -> str | None:
     if not data:
         return None
     return get_game_icon_url(data["universeId"])
-
 
 def get_friend_count_safe(user_id: int) -> tuple[int | str, bool]:
     """
@@ -435,7 +473,6 @@ def export_presets_for_user(discord_user_id: int) -> str:
     )
 
     return "\n".join(lines)
-
 
 def import_presets_for_user(discord_user_id: int, text: str) -> tuple[int, int]:
     user_key = str(discord_user_id)
@@ -541,7 +578,6 @@ def import_presets_for_user(discord_user_id: int, text: str) -> tuple[int, int]:
 
     return imported_combos, imported_games
 
-
 # ------ EMBED / PAGINATION HELPERS FOR SCAN ------
 
 def sus_square(sus: float) -> str:
@@ -602,6 +638,13 @@ def build_friend_embed(m: dict, game_info: dict | None) -> discord.Embed:
             f"Bot likelihood from badges: {sq} **{sus:.2f}%**"
         )
 
+    nm_pct = m.get("name_match_pct", 0.0) or 0.0
+    if nm_pct > 0.0:
+        lines.append(f"Name match percentage vs target: **{nm_pct:.2f}%**")
+
+    cluster_id = m.get("cluster_id")
+    cluster_marker = f" 🧬[**{cluster_id}**]" if cluster_id is not None else ""
+
     sus = m.get("sus_score", 0.0) or 0.0
     if sus == 0.0:
         color = discord.Color.green()
@@ -614,7 +657,8 @@ def build_friend_embed(m: dict, game_info: dict | None) -> discord.Embed:
     else:
         color = discord.Color.orange()
 
-    title_text = m.get("display_name") or m["username"]
+    name_clone = " 🚩" if nm_pct >= 25.0 else ""
+    title_text = (m.get("display_name") or m["username"]) + name_clone + cluster_marker
     username_text = m["username"]
 
     emb = discord.Embed(
@@ -625,7 +669,6 @@ def build_friend_embed(m: dict, game_info: dict | None) -> discord.Embed:
     if m["headshot_url"]:
         emb.set_thumbnail(url=m["headshot_url"])
     return emb
-
 
 class FriendScanView(discord.ui.View):
     def __init__(self,
@@ -669,7 +712,6 @@ class FriendScanView(discord.ui.View):
             keep_scanning_embed=False,
         )
 
-
 def build_page_embeds_with_views(
     match_data: list[dict],
     page: int,
@@ -697,7 +739,6 @@ def build_page_embeds_with_views(
             )
         )
     return embeds, views
-
 
 class ResultsPaginator(discord.ui.View):
     def __init__(self,
@@ -793,10 +834,20 @@ class ResultsPaginator(discord.ui.View):
         else:
             lines: list[str] = []
             for idx, m in enumerate(self.match_data, start=1):
+                sus = m.get("sus_score", 0.0) or 0.0
+                nm_pct = m.get("name_match_pct", 0.0) or 0.0
+                cluster_id = m.get("cluster_id")
+
+                sq = sus_square(sus)
+                name_flag = " 🚩" if nm_pct >= 25.0 else ""
+                cluster_flag = f" 🧬[**{cluster_id}**]" if cluster_id is not None else ""
+
                 lines.append(
-                    f"{idx}. {m.get('display_name') or m['username']} "
+                    f"{idx}. {sq}{name_flag}{cluster_flag} "
+                    f"{m.get('display_name') or m['username']} "
                     f"(@{m['username']}, id {m['user_id']}): {m['profile_url']}"
                 )
+
                 lines.append(
                     f"   Presence: {m.get('presence_text', 'Unknown')}, "
                     f"Friends (API-visible): {m.get('friend_count', 'Unknown')}"
@@ -806,18 +857,17 @@ class ResultsPaginator(discord.ui.View):
                 )
                 if m.get("combo_match_detail"):
                     lines.append(
-                        "   Combo detail: " + "; ".join(m["combo_match_detail"])
+                        '   Combo detail: ' + '; '.join(m['combo_match_detail'])
                     )
                 if self.game_info is not None:
-                    sus = m.get("sus_score", 0.0) or 0.0
-                    sq = sus_square(sus)
                     lines.append(
                         f"   Badges: total {m['total_badges']}, "
                         f"game {m['game_badges']} "
                         f"({m['pct']:.2f}% of badges from this game), "
-                        f"bot likelihood: {sq} {sus:.2f}%"
+                        f"bot likelihood: {sus:.2f}%"
                     )
                 lines.append("")
+
 
             header_first = (
                 f"**__Results for {self.target_display_name} (@{self.target_username})__** "
@@ -935,7 +985,6 @@ class ResultsPaginator(discord.ui.View):
         await self._close_and_print(interaction)
         self.stop()
 
-
 class ScanCancelView(discord.ui.View):
     def __init__(self, control: ScanControl, scan_message: discord.Message, invoker_id: int, timeout: float | None = 600):
         super().__init__(timeout=timeout)
@@ -984,7 +1033,6 @@ class ScanCancelView(discord.ui.View):
 
         await interaction.response.edit_message(content="Scan cancelled.", view=None)
         self.stop()
-
 
 class AutoRerunConfirmView(discord.ui.View):
     def __init__(self, invoker_id: int, timeout: float | None = 60):
@@ -1048,7 +1096,6 @@ class AutoRerunConfirmView(discord.ui.View):
             pass
 
         self.stop()
-
 
 class ScanSummaryView(discord.ui.View):
     def __init__(
@@ -1324,7 +1371,6 @@ class ScanSummaryView(discord.ui.View):
             except Exception:
                 pass
 
-
 # ------ RBI COMMAND GROUP ------
 
 rbi_group = app_commands.Group(name="rbi", description="RBI helper commands")
@@ -1372,7 +1418,6 @@ async def rbi_csvimport(interaction: discord.Interaction, data: str):
 
     await interaction.followup.send(msg, ephemeral=True)
 
-
 @rbi_group.command(name="ping", description="Check if RBI is alive.")
 async def rbi_ping(interaction: discord.Interaction):
     await interaction.response.send_message(f"pong (rbi slash) – {BOT_VERSION}")
@@ -1395,7 +1440,6 @@ async def rbi_debugscan(interaction: discord.Interaction):
         ),
         ephemeral=True,
     )
-
 
 # ------ HELP PAGINATION VIEW ------
 
@@ -1428,6 +1472,7 @@ class RBIHelpView(discord.ui.View):
         super().__init__(timeout=300)
         self.invoker_id = invoker_id
         self.current_page = "about"
+        self.message = None
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.invoker_id:
@@ -1437,6 +1482,16 @@ class RBIHelpView(discord.ui.View):
             )
             return False
         return True
+    
+    async def on_timeout(self):
+        try:
+            if self.message is not None:
+                await self.message.edit(
+                    content="RBI help timed out. Run `/rbi help` again to reopen it.",
+                    view=None,
+                )
+        except Exception:
+            pass
 
     def build_commands_embed(self) -> discord.Embed:
         description_lines = [
@@ -1466,6 +1521,7 @@ class RBIHelpView(discord.ui.View):
             "Match mode:",
             "- `Exact`: friend must wear all items in a combo.",
             "- `Inexact`: friend can wear any subset; embeds show X/Y items per combo.",
+            "",
         ]
 
         embed = discord.Embed(
@@ -1483,10 +1539,10 @@ class RBIHelpView(discord.ui.View):
         embed = discord.Embed(
             title="About RBI (page 1/3)",
             description=(
-                "# RBI (Roblox Bot Investigator) estimates how likely a Roblox account is being "
-                "fed by automation or bot farms.\n\n"
-                "It looks at outfits, badge patterns, and friend networks to spot accounts "
-                "that look more like bots than normal players."
+                "# RBI (Roblox Bot Investigator) estimates whether a Roblox account is likely "
+                "being fed by automation or bot farms.\n\n"
+                "It looks at outfits, badge patterns, usernames, and friend networks to spot "
+                "accounts that behave more like bots than normal players."
             ),
             color=discord.Color.blurple(),
         )
@@ -1494,12 +1550,12 @@ class RBIHelpView(discord.ui.View):
         embed.add_field(
             name="How RBI thinks about bots",
             value=(
-                "- **Badge goals**: Bot farms usually aim for a small badge goal in a game "
-                "(for example, 8–12 badges) and then stop.\n"
-                "- **Real players**: Either have very few badges (new players) or way more badges "
-                "from playing normally over time.\n"
-                "- **Exploit alts**: Often have most of their badges in one game, and also match "
-                "default outfits like bacon / starter combos.\n"
+                "- **Badge goals**: Bot farms often stop after reaching a small badge target "
+                "(for example, 8–12 badges).\n"
+                "- **Real players**: Usually have very few badges or many badges from long-term play.\n"
+                "- **Exploit alts**: Often concentrate badges in one game and match default outfits.\n"
+                "- **Username patterns**: Reused name fragments across alts can raise a 🚩, and repeated "
+                "name sets can also get a 🧬[**<n>**] tag."
             ),
             inline=False,
         )
@@ -1507,11 +1563,9 @@ class RBIHelpView(discord.ui.View):
         embed.add_field(
             name="What the scores mean",
             value=(
-                "- **Per-friend badge likelihood**: how botted a single friend looks for a specific game.\n"
-                "- **Sus Score**: how likely the **target account** is being fed by bots, based on how many "
-                "friends look botted, how strongly they look botted, and how many are in the top risk band.\n"
-                "- These scores are **signals**, not bans: high numbers suggest you should take a closer look, "
-                "not instantly assume guilt.\n"
+                "- **Per-friend badge likelihood**: How botted one friend looks in a specific game.\n"
+                "- **Sus Score**: How likely the target account is being fed by bots.\n"
+                "- Scores are signals, not bans; use them as a starting point for review."
             ),
             inline=False,
         )
@@ -1521,7 +1575,7 @@ class RBIHelpView(discord.ui.View):
             value=(
                 f"- Current version: **{BOT_VERSION}**\n"
                 "- Last major scoring update: **03/19/2026**\n"
-                "- Source code / GitHub: **[TEMPORARY PLACEHOLDER]**\n"
+                "- Source code / GitHub: **[TEMPORARY PLACEHOLDER]**"
             ),
             inline=False,
         )
@@ -1529,9 +1583,9 @@ class RBIHelpView(discord.ui.View):
         embed.add_field(
             name="Limitations",
             value=(
-                "- Roblox APIs can be rate-limited or incomplete; RBI shows warnings when data may be partial.\n"
-                "- Different games may need different targets and thresholds as they update over time.\n"
-                "- RBI is a helper tool; always combine scores with your own judgment.\n"
+                "- Roblox APIs can be rate-limited or incomplete.\n"
+                "- Thresholds may need tuning by game.\n"
+                "- RBI is a helper tool, so combine scores with judgment."
             ),
             inline=False,
         )
@@ -1540,7 +1594,6 @@ class RBIHelpView(discord.ui.View):
             text="Use the buttons below to switch between About, Commands, and Formulas."
         )
         return embed
-
 
     def build_formulas_embed(self) -> discord.Embed:
         embed = discord.Embed(
@@ -1565,66 +1618,84 @@ class RBIHelpView(discord.ui.View):
             name="Per-friend badge likelihood (idea)",
             value=(
                 "- Count how many badges a friend has in total, and how many are from this game.\n"
-                "- If almost none of their badges are from this game (<5%), they count as **0% botted** "
-                "for this game.\n"
-                "- Around the game’s target badge count (for example 8–12 when the target is 10), they’re "
-                "treated as most suspicious (close to 100%).\n"
-                "- Far above the target (for example 20, 30, 40+), the score slowly falls back down "
-                "towards 0% because that looks more like a real grinder.\n"
+                "- If almost none of their badges are from this game (<5%), they count as **0% botted** for this game.\n"
+                "- Around the game’s target badge count (for example 8–12 when the target is 10), they’re treated as most suspicious (close to 100%).\n"
+                "- Far above the target (for example 20, 30, 40+), the score slowly falls back down towards 0% because that looks more like a real grinder.\n"
             ),
             inline=False,
         )
 
-        # Per-friend badge likelihood – exact steps (shortened)
+        # Per-friend badge likelihood – exact steps
         embed.add_field(
-            name="Per-friend badge likelihood (steps)",
+            name="Per-friend badge likelihood (math)",
             value=(
-                "Let `T` = target badges, `game_badges` = badges from this game, "
-                "`total_badges` = all badges, and `ratio = game_badges / total_badges`.\n"
-                "1. If `total_badges == 0` or `ratio < 0.05`: likelihood = **0%**.\n"
+                "Let `T` = target badges, `gb` = game badges, `tb` = total badges, and `r = gb / tb`.\n"
+                "1. If `tb == 0` or `r < 0.05`, then `likelihood = 0`.\n"
                 "2. `low = round(0.8 × T)`, `high = round(1.2 × T)`, `upper_zero ≈ 4 × T`.\n"
-                "3. Base score `raw` from `game_badges`:\n"
-                "   - If `0 < game_badges < low`: `raw = (game_badges / low) × 100`.\n"
-                "   - If `low ≤ game_badges ≤ high`: `raw = 100`.\n"
-                "   - If `high < game_badges < upper_zero`:\n"
-                "     - `x = (game_badges - high) / (upper_zero - high)` (0–1)\n"
-                "     - `raw = 100 × (0.4 ** x)`.\n"
-                "   - If `game_badges ≥ upper_zero`: `raw = 0`.\n"
+                "3. Base score `raw`:\n"
+                "   - If `0 < gb < low`, `raw = (gb / low) × 100`.\n"
+                "   - If `low ≤ gb ≤ high`, `raw = 100`.\n"
+                "   - If `high < gb < upper_zero`, let `x = (gb - high) / (upper_zero - high)` and `raw = 100 × (0.4 ** x)`.\n"
+                "   - If `gb ≥ upper_zero`, `raw = 0`.\n"
             ),
             inline=False,
         )
 
-        # Ratio-based adjustment – idea + compact formula
+        # Ratio-based adjustment
         embed.add_field(
-            name="Badge ratio adjustment (above target)",
+            name="Badge ratio adjustment",
             value=(
-                "When `game_badges > T` and `raw > 0`, we adjust based on how focused the account is "
-                "on this game:\n"
-                "- `ratio = game_badges / total_badges`.\n"
-                "- If `ratio ≤ 0.20`: `ratio_factor = 0.2` (strong damping, generalist player).\n"
-                "- If `ratio ≥ 0.60`: `ratio_factor = 0.9` (keep most of the score, focused alt).\n"
-                "- If in between:\n"
-                "  - `t = (ratio - 0.20) / (0.60 - 0.20)`\n"
-                "  - `ratio_factor = 0.2 + t × (0.9 - 0.2)`\n"
-                "- Final per-friend likelihood = `raw × ratio_factor`.\n"
+                "Used only when `gb > T` and `raw > 0`.\n"
+                "Let `r = gb / tb`.\n"
+                "- If `r ≤ 0.20`, `ratio_factor = 0.2`.\n"
+                "- If `r ≥ 0.60`, `ratio_factor = 0.9`.\n"
+                "- Otherwise, let `t = (r - 0.20) / 0.40`, then `ratio_factor = 0.2 + t × 0.7`.\n"
+                "- Final badge likelihood before name boosts = `raw × ratio_factor`.\n"
             ),
             inline=False,
         )
 
-        # Sus Score – detailed but within limits
+        # Name match percentage
         embed.add_field(
-            name="Sus Score (fed by bots likelihood)",
+            name="Name match percentage",
+            value=(
+                "RBI compares the target username to each friend's username and display name.\n"
+                "Let `L` be the longest consecutive matching substring length.\n"
+                "Name match % = `(L / length_of_target_username) × 100`.\n"
+                "This only **adds** to bot likelihood; it never reduces it.\n"
+                "A 🚩 appears when name match % is at least 25%.\n"
+            ),
+            inline=False,
+        )
+
+        # Name clusters
+        embed.add_field(
+            name="Name clusters (peer similarity)",
+            value=(
+                "RBI also compares matched friends against each other.\n"
+                "Let `peer_threshold` be the minimum pairwise name similarity needed to count as a cluster match.\n"
+                "For each friend, `similar_friend_count` = number of other matched friends above that threshold.\n"
+                "Peer boost = `min(similar_friend_count × peer_weight, peer_cap)`.\n"
+                "That boost only increases Sus Score if the friend already has non-zero bot likelihood.\n"
+                "Clustered names are labeled as `🧬[**<n>**]` in the paginator and plain-text output.\n"
+            ),
+            inline=False,
+        )
+
+        # Sus Score
+        embed.add_field(
+            name="Sus Score",
             value=(
                 "Inputs:\n"
-                "- Quantity factor `Q = min(matches × 10, 100)`.\n"
-                "- Per-friend likelihoods `s_i` for each matched friend.\n"
-                "- Only friends with `s_i ≥ 25` are used in badge aggregation.\n"
-                "- Let `k` = # of matched friends with `s_i ≥ 25`, `n` = total matched friends, "
-                "`p = k / n`.\n"
-                "- Weighted badge factor:\n"
-                "  - weights `w_i = s_i / 100`\n"
-                "  - `avg_badge = (Σ (s_i × w_i)) / (Σ w_i)` (or 0 if no risky friends).\n"
-                "- Let `k_red` = # of matched friends with `s_i ≥ 75`.\n\n"
+                "- `Q = min(matches × 10, 100)`.\n"
+                "- Per-friend likelihoods `s_i`.\n"
+                "- Only friends with `s_i ≥ 25` count toward aggregation.\n"
+                "- `k =` number of matched friends with `s_i ≥ 25`.\n"
+                "- `n =` total matched friends.\n"
+                "- `p = k / n`.\n"
+                "- `weights w_i = s_i / 100`.\n"
+                "- `avg_badge = (Σ(s_i × w_i)) / (Σ w_i)`.\n"
+                "- `k_red =` number of matched friends with `s_i ≥ 75`.\n\n"
                 "Formula:\n"
                 "1. `BaseSus = (Q + avg_badge) / 2`.\n"
                 "2. `boost = min(1 + 0.15 × (k_red^1.2), 2)`.\n"
@@ -1638,7 +1709,6 @@ class RBIHelpView(discord.ui.View):
             text="Use the buttons below to switch between About, Commands, and Formulas."
         )
         return embed
-
 
     @discord.ui.button(label="About", style=discord.ButtonStyle.primary)
     async def about_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1667,14 +1737,13 @@ class RBIHelpView(discord.ui.View):
             view=self,
         )
 
-
 @rbi_group.command(name="help", description="Show bot info and all RBI commands and formulas.")
 async def rbi_help(interaction: discord.Interaction):
     view = RBIHelpView(invoker_id=interaction.user.id)
     view._apply_button_styles()
     about_embed = view.build_about_embed()
     await interaction.response.send_message(embed=about_embed, view=view)
-
+    view.message = await interaction.original_response()
 
 @rbi_group.command(name="setcombo", description="Create or update a named combo for you.")
 @app_commands.describe(
@@ -1701,7 +1770,6 @@ async def rbi_setcombo(interaction: discord.Interaction, name: str, ids: str):
     await interaction.response.send_message(
         f"Combo `{name}` saved with IDs: {', '.join(str(i) for i in sorted(id_ints))}"
     )
-
 
 @rbi_group.command(
     name="addgame",
@@ -1749,7 +1817,6 @@ async def rbi_addgame(
         + extra,
         ephemeral=True
     )
-
 
 @rbi_group.command(name="mycombos", description="Show your combos and global combos.")
 async def rbi_mycombos(interaction: discord.Interaction):
@@ -1810,7 +1877,6 @@ async def rbi_mycombos(interaction: discord.Interaction):
     embed.set_footer(text=f"Bot version: {BOT_VERSION}")
     await interaction.response.send_message(embed=embed)
 
-
 @rbi_group.command(name="mygames", description="Show games you have saved for badge scanning.")
 async def rbi_mygames(interaction: discord.Interaction):
     user_key = str(interaction.user.id)
@@ -1870,7 +1936,6 @@ async def rbi_mygames(interaction: discord.Interaction):
 
     embed.set_footer(text=f"Bot version: {BOT_VERSION}")
     await interaction.response.send_message(embed=embed)
-
 
 # ------ SCAN CORE (with Sus Score logic and new/old handling) ------
 
@@ -2213,6 +2278,12 @@ async def run_scan_core(
                 friendcount_rate_limited = True
             await asyncio.sleep(FRIEND_COUNT_REQUEST_DELAY)
 
+            nm_pct = name_match_percentage(
+                target_name=username_target,
+                friend_name=username,
+                friend_display=display_name_friend,
+            )
+
             combo_matches.append(
                 {
                     "username": username,
@@ -2225,6 +2296,7 @@ async def run_scan_core(
                     "join_text": friend_join_text,
                     "presence_text": friend_presence_text,
                     "friend_count": friend_total_friends,
+                    "name_match_pct": nm_pct,
                 }
             )
         except Exception:
@@ -2311,29 +2383,38 @@ async def run_scan_core(
                     else:
                         raw_likelihood = 0.0
 
-                    badge_likelihood = raw_likelihood
+                badge_likelihood = raw_likelihood
 
-                    # 2) Ratio-based modulation ONLY when above target
-                    if gb > T and total_badges > 0 and raw_likelihood > 0.0:
-                        ratio = game_badges / total_badges  # 0..1
+                # 2) Ratio-based modulation ONLY when above target
+                if gb > T and total_badges > 0 and raw_likelihood > 0.0:
+                    ratio = game_badges / total_badges  # 0..1
 
-                        # Tuned for exploit alts like 22/30 (~0.73):
-                        # - ratio <= 0.2 -> strong damping (0.2x)
-                        # - ratio >= 0.6 -> almost full strength (0.9x)
-                        # - in between -> smoothly interpolate
-                        if ratio <= 0.2:
-                            ratio_factor = 0.2  # was 0.3
-                        elif ratio >= 0.6:
-                            ratio_factor = 0.9
-                        else:
-                            t = (ratio - 0.2) / (0.6 - 0.2)
-                            ratio_factor = 0.2 + t * (0.9 - 0.2)
+                    # Tuned for exploit alts like 22/30 (~0.73):
+                    # - ratio <= 0.2 -> strong damping (0.2x)
+                    # - ratio >= 0.6 -> almost full strength (0.9x)
+                    # - in between -> smoothly interpolate
+                    if ratio <= 0.2:
+                        ratio_factor = 0.2  # was 0.3
+                    elif ratio >= 0.6:
+                        ratio_factor = 0.9
+                    else:
+                        t = (ratio - 0.2) / (0.6 - 0.2)
+                        ratio_factor = 0.2 + t * (0.9 - 0.2)
 
-                        badge_likelihood *= ratio_factor
+                    badge_likelihood *= ratio_factor
+
+                # 3) Name match percentage boost (only adds)
+                nm_pct = m.get("name_match_pct", 0.0) or 0.0
+                if nm_pct > 0.0 and badge_likelihood > 0.0:
+                    add_amount = min(nm_pct, 100.0) * 0.5
+                    badge_likelihood += add_amount
+                    if badge_likelihood > 100.0:
+                        badge_likelihood = 100.0
 
                 # Coverage rule: if <5% of their badges are from this game, treat as 0.
                 if pct_of_total < 5.0:
                     badge_likelihood = 0.0
+
             except Exception:
                 pass
 
@@ -2359,6 +2440,105 @@ async def run_scan_core(
                     ),
                     view=cancel_view,
                 )
+
+        # --- NEW: peer name clustering among matched friends ---
+        peer_threshold = 40.0  # percent; tweak as needed
+
+        for i, mi in enumerate(enriched_matches):
+            base_name_i = mi.get("username") or ""
+            display_i = mi.get("display_name") or ""
+            similar_count = 0
+            max_peer_pct = 0.0
+
+            for j, mj in enumerate(enriched_matches):
+                if i == j:
+                    continue
+
+                base_name_j = mj.get("username") or ""
+                display_j = mj.get("display_name") or ""
+
+                pct = peer_name_match_pct(base_name_i, display_i, base_name_j, display_j)
+                if pct >= peer_threshold:
+                    similar_count += 1
+                    if pct > max_peer_pct:
+                        max_peer_pct = pct
+
+            mi["similar_friend_count"] = similar_count
+            mi["max_peer_name_match_pct"] = max_peer_pct
+        
+         # --- Assign cluster IDs for peer name groups ---
+        # Any friend with similar_friend_count >= 1 gets a cluster; clusters are based on
+        # similarity to the first unassigned member.
+        cluster_id = 0
+        for i, mi in enumerate(enriched_matches):
+            if mi.get("similar_friend_count", 0) < 1:
+                continue
+            if mi.get("cluster_id") is not None:
+                continue
+
+            cluster_id += 1
+            mi["cluster_id"] = cluster_id
+
+            base_name_i = mi.get("username") or ""
+            display_i = mi.get("display_name") or ""
+
+            for j, mj in enumerate(enriched_matches):
+                if i == j:
+                    continue
+                if mj.get("cluster_id") is not None:
+                    continue
+
+                base_name_j = mj.get("username") or ""
+                display_j = mj.get("display_name") or ""
+
+                pct = peer_name_match_pct(base_name_i, display_i, base_name_j, display_j)
+                if pct >= peer_threshold:
+                    mj["cluster_id"] = cluster_id
+
+        # Friends not in any name cluster will have cluster_id = None or missing.
+        for mi in enriched_matches:
+            if "cluster_id" not in mi:
+                mi["cluster_id"] = None
+
+
+        match_data = enriched_matches
+        # --- Peer name clustering among matched friends ---
+        peer_threshold = 30.0  # percent; tweak as needed
+
+        for i, mi in enumerate(enriched_matches):
+            base_name_i = mi.get("username") or ""
+            display_i = mi.get("display_name") or ""
+            similar_count = 0
+            max_peer_pct = 0.0
+
+            for j, mj in enumerate(enriched_matches):
+                if i == j:
+                    continue
+
+                base_name_j = mj.get("username") or ""
+                display_j = mj.get("display_name") or ""
+
+                pct = peer_name_match_pct(base_name_i, display_i, base_name_j, display_j)
+                if pct >= peer_threshold:
+                    similar_count += 1
+                    if pct > max_peer_pct:
+                        max_peer_pct = pct
+
+            mi["similar_friend_count"] = similar_count
+            mi["max_peer_name_match_pct"] = max_peer_pct
+        # --- Second pass: apply peer-cluster boost to sus_score ---
+        for mi in enriched_matches:
+            badge_likelihood = mi.get("sus_score", 0.0) or 0.0
+            similar_count = mi.get("similar_friend_count", 0) or 0
+
+            if badge_likelihood > 0.0 and similar_count > 0:
+                # Each similar friend adds +2%, capped at +15 total.
+                add_from_peers = min(similar_count * 2.0, 15.0)
+                badge_likelihood += add_from_peers
+                if badge_likelihood > 100.0:
+                    badge_likelihood = 100.0
+
+            mi["sus_score"] = badge_likelihood
 
         match_data = enriched_matches
     else:
@@ -2467,8 +2647,7 @@ async def run_scan_core(
 
     if badge_api_failed and game_info:
         summary_lines.append(
-            "⚠ Badge API error occurred during this scan; badge stats and Sus Scores "
-            "may be incomplete."
+            "⚠ Badge API error occurred during this scan; badge stats and Sus Scores may be incomplete."
         )
 
     summary_lines.extend(
@@ -2477,7 +2656,6 @@ async def run_scan_core(
             "For exact formulas for the friend percentage and **Sus Score**, use `/rbi help` → Formulas.",
         ]
     )
-
 
     if game_info and total_matches > 0:
         if badge_target:
@@ -2494,16 +2672,27 @@ async def run_scan_core(
             f"**{contributing_red_count}/{total_matches}**"
         )
 
+    summary_lines.extend(
+        [
+            "",
+            "Emoji legend:",
+            "- 🟥 = very high bot likelihood",
+            "- 🟧 = high bot likelihood",
+            "- 🟨 = moderate bot likelihood",
+            "- 🟩 = low bot likelihood",
+            "- 🚩 = name match to target account",
+            "- 🧬 = name cluster / repeated similar-name set",
+        ]
+    )
+
     # API disclaimers
     if presence_rate_limited:
         summary_lines.append(
-            "⚠ Presence API returned partial or no data during this scan; some friend statuses "
-            "may show as Unknown due to Roblox rate limiting."
+            "⚠ Presence API returned partial or no data during this scan; some friend statuses may show as Unknown due to Roblox rate limiting."
         )
     if friendcount_rate_limited:
         summary_lines.append(
-            "⚠ Friends API returned partial or no data for some users; friend counts marked "
-            "as 'Rate limited' or 'Error' reflect Roblox API limits, not missing data in the bot."
+            "⚠ Friends API returned partial or no data for some users; friend counts marked as 'Rate limited' or 'Error' reflect Roblox API limits, not missing data in the bot."
         )
 
     if target_sus_score is None:
@@ -2546,9 +2735,7 @@ async def run_scan_core(
             inline=False,
         )
 
-    # Move bot version into footer instead of description
     summary_embed.set_footer(text=f"Bot version: {BOT_VERSION}")
-
 
     summary_view = ScanSummaryView(
         invoker_id=interaction.user.id,
@@ -2579,9 +2766,18 @@ async def run_scan_core(
         return
 
     match_data_to_show.sort(
-        key=lambda m: (m["sus_score"], m["pct"], m["game_badges"], m["total_badges"]),
+        key=lambda m: (
+            m["sus_score"],                         # 1) highest bot likelihood first
+            m.get("similar_friend_count", 0),       # 2) then larger name clusters
+            m.get("max_peer_name_match_pct", 0.0),  # 3) then tighter peer similarity
+            m.get("name_match_pct", 0.0),           # 4) then similarity to target name
+            m["pct"],                               # 5) then game badge %
+            m["game_badges"],
+            m["total_badges"],
+        ),
         reverse=True,
     )
+
 
     paginator = ResultsPaginator(
         invoker_id=interaction.user.id,
@@ -2623,7 +2819,6 @@ async def run_scan_core(
         paginator.result_messages.append(msg)
 
     summary_view.paginator = paginator
-
 
 @rbi_group.command(
     name="scan",
@@ -2672,7 +2867,6 @@ async def rbi_scan(
         channel_id=channel_id,
         scan_token=scan_token,
     )
-
 
 client.tree.add_command(rbi_group)
 
