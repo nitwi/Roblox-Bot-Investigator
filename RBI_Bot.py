@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.15-beta"
+BOT_VERSION = "v0.15 [Beta]"
 
 # ------ CONFIG ------
 
