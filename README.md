@@ -1,4 +1,4 @@
-# (Private) RBI – Roblox Bot Investigator
+# (Beta Release) RBI – Roblox Bot Investigator
 
 RBI (Roblox Bot Investigator) is a Discord bot that analyzes a Roblox account’s friends to estimate how likely the account is being **fed by bots**.
 
