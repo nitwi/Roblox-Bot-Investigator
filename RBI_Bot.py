@@ -1,4 +1,4 @@
-# RBI Bot v0.16-beta
+# RBI Bot v0.16.1-beta
 
 import os
 import time
@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.16 [Beta]"
+BOT_VERSION = "v0.16.1 [Beta]"
 
 # ------ CONFIG ------
 
@@ -1732,9 +1732,11 @@ class RBIHelpView(discord.ui.View):
     async def formulas_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page = "formulas"
         self._apply_button_styles()
-        await interaction.response.edit_message(
-            embed=self.build_formulas_embed(),
-            view=self,
+        await interaction.response.defer()
+        if self.message is not None:
+            await self.message.edit(
+                embed=self.build_formulas_embed(),
+                view=self,
         )
 
 @rbi_group.command(name="help", description="Show bot info and all RBI commands and formulas.")
