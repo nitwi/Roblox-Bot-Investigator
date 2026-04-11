@@ -18,7 +18,7 @@ It looks at:
   - Scan a Roblox user’s friends and find those wearing any of your combos.
   - Support for:
     - User-defined combos (`/rbi setcombo`, `/rbi mycombos`)
-    - Global default combos (bacon, beanie, acorn)
+    - Global default combos (bacon, beanie, acorn, john, greenbean)
     - Special keywords (`mycombos`, `globalcombos`, `all`, `none`)
 
 - **Game-aware badge analysis**
