@@ -25,7 +25,7 @@ GLOBAL_COMBOS: dict[str, set[int]] = {
     "beanie": {382537569, 4047884939, 1772336109},
     "acorn": {62724852, 144076512, 144076436},
     "john": {301809996, 301811279, 301819845, 301820684},
-    "greenbean": {301809996, 301811279, 301819845, 301820684},
+    "greenbean": {617605556},
 }
 
 GLOBAL_DESCRIPTIONS: dict[str, str] = {
@@ -1578,8 +1578,8 @@ class RBIHelpView(discord.ui.View):
             name="Version and links",
             value=(
                 f"- Current version: **{BOT_VERSION}**\n"
-                "- Last major scoring update: **03/19/2026**\n"
-                "- Source code / GitHub: **[TEMPORARY PLACEHOLDER]**"
+                "- Last major scoring update: **04/11/2026**\n"
+                "- Source code / GitHub: **https://github.com/nitwi/Roblox-Bot-Investigator**"
             ),
             inline=False,
         )
