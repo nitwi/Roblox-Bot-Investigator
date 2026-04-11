@@ -1,20 +1,20 @@
-# RBI Bot v0.16.1-beta
+# RBI Bot v0.16.2-beta
 
 import os
 import time
 import asyncio
 import requests
-import discord
+import discord # py -3 -m pip install -U discord.py
 import uuid
 import re
 from discord import app_commands
-from dotenv import load_dotenv
+from dotenv import load_dotenv # py -3 -m pip install python-dotenv
 from datetime import datetime, timezone
 
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.16.1 [Beta]"
+BOT_VERSION = "v0.16.2 [Beta]"
 
 # ------ CONFIG ------
 
@@ -24,12 +24,16 @@ GLOBAL_COMBOS: dict[str, set[int]] = {
     "bacon": {144076760, 144076358, 63690008},
     "beanie": {382537569, 4047884939, 1772336109},
     "acorn": {62724852, 144076512, 144076436},
+    "john": {301809996, 301811279, 301819845, 301820684},
+    "greenbean": {301809996, 301811279, 301819845, 301820684},
 }
 
 GLOBAL_DESCRIPTIONS: dict[str, str] = {
     "bacon": "Bacon (Default Male Account)",
     "beanie": "Beany (Default Genderless Account)",
     "acorn": "Acorn (Default Female Account)",
+    "john": "John (Default XBOX Account)",
+    "greenbean": "GreenBean (Grow A Garden Account)",
 }
 
 GLOBAL_GAMES: dict[str, dict] = {
