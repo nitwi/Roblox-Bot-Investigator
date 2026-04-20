@@ -1,29 +1,38 @@
 # (Beta Release) RBI – Roblox Bot Investigator
 
-RBI (Roblox Bot Investigator) is a Discord bot that analyzes a Roblox account’s friends to estimate how likely the account is being **fed by bots**.
+RBI (Roblox Bot Investigator) is a Discord bot that analyzes a Roblox account’s **network** (friends, following, followers) to estimate how likely the account is being **fed by bots**.
 
 It looks at:
 
 - Outfits (default/bacon-style combos)
 - Badge patterns in specific games (like fisch)
-- How focused each friend is on that game
-- How many friends fall into high-risk “botted” patterns
+- How focused each account is on that game
+- How many accounts fall into high-risk “botted” patterns
+- How similar matched accounts are to each other and to the target (name clustering)
 
 ---
 
 ## Features
 
-- **Combo-based friend scans**
+- **Combo-based network scans**
   - Define item combos (e.g. bacon / starter outfits).
-  - Scan a Roblox user’s friends and find those wearing any of your combos.
+  - Scan a Roblox user’s **friends**, **following**, or **followers** and find those wearing any of your combos.
   - Support for:
     - User-defined combos (`/rbi setcombo`, `/rbi mycombos`)
     - Global default combos (bacon, beanie, acorn, john, greenbean)
     - Special keywords (`mycombos`, `globalcombos`, `all`, `none`)
 
+- **Scan source modes (friends / following / followers)**
+  - `/rbi scan` now supports a `scan_source` option:
+    - `Friends` – scan the target’s friends list (default).
+    - `Following` – scan the accounts the target is following.
+    - `Followers` – scan the accounts that follow the target.
+  - The scan summary explicitly shows which relationship list was scanned and how many accounts were visible via the Roblox API.
+  - “Scan this account” buttons and additional scans preserve the chosen `scan_source`, so rescans use the same relationship mode as the original run.
+
 - **Game-aware badge analysis**
   - Configure per-game targets (`/rbi addgame`, `/rbi mygames`).
-  - For each matching friend:
+  - For each matching account:
     - Count total badges vs badges from the target game.
     - Apply a game-specific **target badge count** (e.g. 10 for fisch).
     - Use **badge bands**:
@@ -38,15 +47,20 @@ It looks at:
 
 - **Sus Score (0–100%)**
   - Combines:
-    - How many friends match the combos (quantity factor).
-    - How botted those friends look from badges (badge factor).
+    - How many accounts match the combos (quantity factor).
+    - How botted those accounts look from badges (badge factor).
     - How many are in the very high-risk range.
+    - How clustered their names are relative to each other and to the target.
   - Produces a 0–100 “fed by bots likelihood” for the target account.
   - Uses heuristics; it’s a signal, not proof.
 
 - **Rich Discord UX**
   - Slash command interface (`/rbi scan`, `/rbi help`, `/rbi csvexport`, `/rbi csvimport`, etc.).
-  - Paginated scan results with per-friend embeds.
+  - Paginated scan results with per-account embeds.
+  - Result embeds include:
+    - Per-account badge summary for the selected game (when configured).
+    - Per-account bot likelihood indicator.
+    - Name match percentage vs the target and optional cluster markers.
   - Help view with:
     - **About** page (overview & reasoning)
     - **Commands** page (quick reference)
@@ -77,8 +91,16 @@ Core slash commands:
 - `/rbi mygames`  
   List your saved game presets.
 
-- `/rbi scan roblox_username:<name> combo_names:<names|mycombos|globalcombos|all|none> [game:<key>] [match_mode:<exact|inexact>]`  
-  Scan a Roblox user’s friends for matching combos and, optionally, game badge stats.
+- `/rbi scan roblox_username:<name> combo_names:<names|mycombos|globalcombos|all|none> [game:<key>] [match_mode:<exact|inexact>] [scan_source:<friends|following|followers>]`  
+  Scan a Roblox user’s friends, following, or followers for matching combos and, optionally, game badge stats.
+
+  - `match_mode`:
+    - `exact` – account must wear **all** items in a combo.
+    - `inexact` – account can wear **any subset**; embeds show X/Y items per combo.
+  - `scan_source`:
+    - `friends` – scan the target’s friends list (default).
+    - `following` – scan the accounts the target follows.
+    - `followers` – scan the accounts that follow the target.
 
 - `/rbi csvexport`  
   Export your combos and games as a single-line text blob.
@@ -90,9 +112,9 @@ Core slash commands:
 
 ## How RBI scores accounts (short version)
 
-### Per-friend badge likelihood
+### Per-account badge likelihood
 
-For each friend and game:
+For each matched account and game:
 
 1. Count:
    - `total_badges` (all badges).
@@ -108,16 +130,17 @@ For each friend and game:
 
 ### Sus Score
 
-Across all matching friends:
+Across all matching accounts:
 
 - Quantity factor `Q = min(matches × 10, 100)`.
-- For each matched friend, compute per-friend likelihood `s_i`.
-- Only consider friends with `s_i ≥ 25` when aggregating badges.
+- For each matched account, compute per-account likelihood `s_i`.
+- Only consider accounts with `s_i ≥ 25` when aggregating badges.
 - Compute:
-  - `p` = fraction of matched friends that are “risky” (sufficiently high `s_i`).
+  - `p` = fraction of matched accounts that are “risky” (sufficiently high `s_i`).
   - `avg_badge` = weighted average of `s_i` using weights based on `s_i`.
-  - `k_red` = number of very high-risk friends (`s_i ≥ 75`).
-- Combine into a final 0–100 score; more risky friends and higher `avg_badge` yield a higher Sus Score.
+  - `k_red` = number of very high-risk accounts (`s_i ≥ 75`).
+- Combine into a final 0–100 score; more risky accounts and higher `avg_badge` yield a higher Sus Score.
+- Name similarity and clustering can add additional weight when multiple matched accounts share strong name fragments with each other or the target.
 
 ---
 
@@ -135,13 +158,16 @@ Some important configuration points (in code):
   - Default target badge counts.
 
 - **Delays and rate limits**  
-  Small delays between Roblox API requests to reduce the chance of rate limiting.
+  Small delays between Roblox API requests to reduce the chance of rate limiting when:
+  - Fetching avatar outfits for many accounts.
+  - Fetching badges.
+  - Fetching presence or friend counts.
 
-You can also use `/rbi addgame` and `/rbi setcombo` in Discord to configure these per-user without editing code.
+You can also use `/rbi addgame` and `/rbi setcombo` in Discord to configure these per-user **without** editing code.
 
 ---
 
 ## Acknowledgements
 
-- Roblox APIs for friends, avatars, presence, and badges.
+- Roblox APIs for friends, followers, following, avatars, presence, and badges.
 - discord.py for the Discord bot framework.
