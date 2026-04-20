@@ -1,4 +1,4 @@
-# RBI Bot v0.16.2-beta
+# RBI Bot v0.17.2-beta
 
 import os
 import time
@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.16.2 [Beta]"
+BOT_VERSION = "v0.17.2 [Beta]"
 
 # ------ CONFIG ------
 
@@ -56,6 +56,9 @@ BADGE_REQUEST_DELAY = 0.3
 FRIEND_COUNT_REQUEST_DELAY = 0.15
 
 FRIENDS_API = "https://friends.roblox.com/v1/users/{userId}/friends"
+FOLLOWING_API = "https://friends.roblox.com/v1/users/{userId}/followings"
+FOLLOWERS_API = "https://friends.roblox.com/v1/users/{userId}/followers"
+
 AVATAR_API = "https://avatar.roblox.com/v1/users/{userId}/avatar"
 USERNAME_TO_ID_API = "https://users.roblox.com/v1/usernames/users"
 
@@ -73,8 +76,8 @@ USER_HEADSHOT_API = (
 
 PRESENCE_API = "https://presence.roblox.com/v1/presence/users"
 
-# Cache of seen user IDs per (user, target, combos, game, mode)
-SCAN_CACHE: dict[tuple[int, str, str, str | None, str], set[int]] = {}
+# Cache of seen user IDs per (user, target, combos, game, match_mode, scan_source)
+SCAN_CACHE: dict[tuple[int, str, str, str | None, str, str], set[int]] = {}
 
 # ------ PER-CHANNEL ACTIVE SCAN / RESCAN STATE ------
 
@@ -151,12 +154,63 @@ def format_join_date(dt: datetime | None) -> str:
     delta_years = (now - dt).days / 365.25
     return f"{dt.date().isoformat()} (~{delta_years:.1f} years ago)"
 
-def get_friends(user_id: int) -> list[dict]:
-    url = FRIENDS_API.format(userId=user_id)
-    r = requests.get(url, timeout=10)
-    r.raise_for_status()
-    data = r.json()
-    return data.get("data", [])
+def get_scan_source_label(scan_source: str) -> str:
+    if scan_source == "following":
+        return "following"
+    if scan_source == "followers":
+        return "followers"
+    return "friends"
+
+def get_relationship_users(
+    user_id: int,
+    scan_source: str = "friends",
+    max_pages: int | None = None,
+) -> list[dict]:
+    if scan_source == "following":
+        base_url = FOLLOWING_API.format(userId=user_id)
+    elif scan_source == "followers":
+        base_url = FOLLOWERS_API.format(userId=user_id)
+    else:
+        base_url = FRIENDS_API.format(userId=user_id)
+
+    users: list[dict] = []
+    cursor: str | None = None
+    pages_fetched = 0
+
+    while True:
+        params = None
+
+        if scan_source in ("following", "followers"):
+            params = {
+                "limit": 100,
+                "sortOrder": "Asc",
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+        r = requests.get(base_url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        page_users = data.get("data", [])
+        if page_users:
+            users.extend(page_users)
+
+        pages_fetched += 1
+
+        if scan_source == "friends":
+            break
+
+        cursor = data.get("nextPageCursor")
+        if not cursor:
+            break
+
+        if max_pages is not None and pages_fetched >= max_pages:
+            break
+
+        time.sleep(0.2)
+
+    return users
 
 def get_avatar_assets(user_id: int) -> set[int]:
     url = AVATAR_API.format(userId=user_id)
@@ -485,16 +539,14 @@ def import_presets_for_user(discord_user_id: int, text: str) -> tuple[int, int]:
 
     s = text.strip()
 
-    # Strip ``` fences if user pasted a code block
     if s.startswith("```"):
         s = s[3:]
         if "\n" in s:
-            s = s.split("\n", 1)[1]
+            s = s.split("\n", 1)[2]
         s = s.strip()
         if s.endswith("```"):
             s = s[:-3].strip()
 
-    # Expect format: COMBOS=...|GAMES=...
     parts = s.split("|", 1)
     combos_part = ""
     games_part = ""
@@ -509,13 +561,10 @@ def import_presets_for_user(discord_user_id: int, text: str) -> tuple[int, int]:
     temp_games: dict[tuple[str, str], dict] = {}
     temp_targets: dict[tuple[str, str], int] = {}
 
-    # Parse combos chunk: name:id id id;name2:id id
     if combos_part:
         for chunk in combos_part.split(";"):
             chunk = chunk.strip()
-            if not chunk:
-                continue
-            if ":" not in chunk:
+            if not chunk or ":" not in chunk:
                 continue
             name, ids_str = chunk.split(":", 1)
             name = name.strip()
@@ -531,49 +580,53 @@ def import_presets_for_user(discord_user_id: int, text: str) -> tuple[int, int]:
             temp_combos[(user_key, name.lower())] = asset_ids
             imported_combos += 1
 
-    # Parse games chunk: key:place:universe:target;key2:...
     if games_part:
         for chunk in games_part.split(";"):
             chunk = chunk.strip()
             if not chunk:
                 continue
-            pieces = chunk.split(":")
+            pieces = [p.strip() for p in chunk.split(":")]
             if len(pieces) < 3:
                 continue
-            game_key = pieces.strip().lower()
-            place_str = pieces.strip()
-            universe_str = pieces.strip()
-            target_str = pieces.strip() if len(pieces) > 3 else ""
+
+            game_key = pieces[0].lower()
+            place_str = pieces[1]
+            universe_str = pieces[2]
+            target_str = pieces[3] if len(pieces) > 3 else ""
+
             try:
                 place_id = int(place_str)
                 universe_id = int(universe_str)
             except ValueError:
                 continue
+
             temp_games[(user_key, game_key)] = {
                 "key": game_key,
                 "placeId": place_id,
                 "universeId": universe_id,
             }
+
             if target_str:
                 try:
                     temp_targets[(user_key, game_key)] = int(target_str)
                 except ValueError:
                     pass
+
             imported_games += 1
 
-    # If nothing valid parsed, do not touch existing presets
     if imported_combos == 0 and imported_games == 0:
         return 0, 0
 
-    # Replace this user's presets
     for key in list(USER_COMBOS.keys()):
-        if key == user_key:
+        if key[0] == user_key:
             del USER_COMBOS[key]
+
     for key in list(USER_GAMES.keys()):
-        if key == user_key:
+        if key[0] == user_key:
             del USER_GAMES[key]
+
     for key in list(USER_BADGE_TARGETS.keys()):
-        if key == user_key:
+        if key[0] == user_key:
             del USER_BADGE_TARGETS[key]
 
     USER_COMBOS.update(temp_combos)
@@ -619,7 +672,7 @@ def build_friend_embed(m: dict, game_info: dict | None) -> discord.Embed:
         detail_block = ""
 
     friend_count_line = (
-        f"Friends (API-visible, max 200): {m.get('friend_count', 'Unknown')}"
+        f"Friends on this account (API-visible, max 200): {m.get('friend_count', 'Unknown')}"
     )
 
     lines = [
@@ -681,6 +734,7 @@ class FriendScanView(discord.ui.View):
                  combo_names: str,
                  game: str | None,
                  match_mode: str | None,
+                 scan_source: str = "friends",
                  timeout: float | None = 600):
         super().__init__(timeout=timeout)
         self.invoker_id = invoker_id
@@ -688,6 +742,7 @@ class FriendScanView(discord.ui.View):
         self.combo_names = combo_names
         self.game = game
         self.match_mode = match_mode
+        self.scan_source = scan_source
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.invoker_id:
@@ -698,7 +753,7 @@ class FriendScanView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Scan this friend", style=discord.ButtonStyle.primary, emoji="🔍")
+    @discord.ui.button(label="Scan this account", style=discord.ButtonStyle.primary, emoji="🔍")
     async def scan_friend(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message(
             f"Starting scan for `{self.friend_username}` with the same parameters..."
@@ -709,6 +764,7 @@ class FriendScanView(discord.ui.View):
             combo_names=self.combo_names,
             game=self.game,
             effective_mode=self.match_mode,
+            scan_source=self.scan_source,
             invoked_from_button=True,
             previous_cumulative_size=None,
             only_show_new=False,
@@ -725,12 +781,15 @@ def build_page_embeds_with_views(
     combo_names: str,
     game: str | None,
     match_mode: str | None,
+    scan_source: str,
 ) -> tuple[list[discord.Embed], list[FriendScanView]]:
     start = page * per_page
     end = start + per_page
     slice_data = match_data[start:end]
+
     embeds: list[discord.Embed] = []
     views: list[FriendScanView] = []
+
     for m in slice_data:
         embeds.append(build_friend_embed(m, game_info))
         views.append(
@@ -740,8 +799,10 @@ def build_page_embeds_with_views(
                 combo_names=combo_names,
                 game=game,
                 match_mode=match_mode,
+                scan_source=scan_source,
             )
         )
+
     return embeds, views
 
 class ResultsPaginator(discord.ui.View):
@@ -752,6 +813,7 @@ class ResultsPaginator(discord.ui.View):
                  combo_names: str,
                  game_key: str | None,
                  match_mode: str | None,
+                 scan_source: str,
                  target_username: str,
                  target_display_name: str,
                  per_page: int = 3,
@@ -771,6 +833,7 @@ class ResultsPaginator(discord.ui.View):
         self.page = 0
         self.max_page = max((len(match_data) - 1) // per_page, 0)
         self.result_messages: list[discord.Message] = []
+        self.scan_source = scan_source
 
         self.header_message: discord.Message | None = None
         self.latest_interaction: discord.Interaction | None = None
@@ -962,6 +1025,7 @@ class ResultsPaginator(discord.ui.View):
             self.combo_names,
             self.game_key,
             self.match_mode,
+            self.scan_source,
         )
 
         content = f"Scan results (page {self.page + 1}/{self.max_page + 1}, total matches: {len(self.match_data)})"
@@ -1109,6 +1173,7 @@ class ScanSummaryView(discord.ui.View):
         combo_names: str,
         game: str | None,
         match_mode: str | None,
+        scan_source: str = "friends",
         timeout: float | None = 600,
     ):
         super().__init__(timeout=timeout)
@@ -1117,6 +1182,7 @@ class ScanSummaryView(discord.ui.View):
         self.combo_names = combo_names
         self.game = game
         self.match_mode = match_mode
+        self.scan_source = scan_source
 
         self.summary_message: discord.Message | None = None
         self.paginator: ResultsPaginator | None = None
@@ -1145,13 +1211,14 @@ class ScanSummaryView(discord.ui.View):
             return self.match_mode
         return None
 
-    def _build_cache_key(self) -> tuple[int, str, str, str | None, str]:
+    def _build_cache_key(self) -> tuple[int, str, str, str | None, str, str]:
         return (
             self.invoker_id,
             self.roblox_username.lower(),
             self.combo_names.lower(),
             (self.game.lower() if self.game else None),
             (self.match_mode or "inexact"),
+            self.scan_source,
         )
 
     @discord.ui.button(
@@ -1212,6 +1279,7 @@ class ScanSummaryView(discord.ui.View):
                 keep_scanning_embed=False,
                 channel_id=channel_id,
                 scan_token=scan_token,
+                scan_source=self.scan_source,
             )
         finally:
             RESCAN_IN_PROGRESS[channel_id] = False
@@ -1311,6 +1379,7 @@ class ScanSummaryView(discord.ui.View):
                 keep_scanning_embed=False,
                 channel_id=channel_id,
                 scan_token=scan_token,
+                scan_source=self.scan_source,
             )
 
             await asyncio.sleep(2)
@@ -1356,6 +1425,7 @@ class ScanSummaryView(discord.ui.View):
             combo_names=self.combo_names,
             game=self.game,
             effective_mode=self._effective_mode(),
+            scan_source=self.scan_source,
             invoked_from_button=True,
             previous_cumulative_size=None,
             only_show_new=False,
@@ -1508,7 +1578,7 @@ class RBIHelpView(discord.ui.View):
             "`/rbi addgame key:<key> place_id:<id> [target_badges:<n>]`",
             "`/rbi mygames`",
             "`/rbi scan roblox_username:<name> combo_names:<names|mycombos|globalcombos|all|none> "
-            "[game:<key>] [match_mode:<exact|inexact>]`",
+            "[game:<key>] [match_mode:<exact|inexact>] [scan_source:<friends|following|followers>]`",
             "`/rbi csvexport`",
             "`/rbi csvimport data:<single-line-from-export>`",
             "",
@@ -1516,15 +1586,20 @@ class RBIHelpView(discord.ui.View):
             "- `mycombos`: all combos you created",
             "- `globalcombos`: all global default combos",
             "- `all`: mycombos + globalcombos",
-            "- `none`: disable combo filtering, scan all friends",
+            "- `none`: disable combo filtering, scan all accounts in the selected scan source",
             "",
             "Preset import/export:",
             "- `csvexport`: sends your combos/games as a single line.",
             "- `csvimport`: paste that line back into `data` to restore presets.",
             "",
             "Match mode:",
-            "- `Exact`: friend must wear all items in a combo.",
-            "- `Inexact`: friend can wear any subset; embeds show X/Y items per combo.",
+            "- `Exact`: account must wear all items in a combo.",
+            "- `Inexact`: account can wear any subset; embeds show X/Y items per combo.",
+            "",
+            "Scan source:",
+            "- `Friends`: scan the target's friends list (default).",
+            "- `Following`: scan the target's following list.",
+            "- `Followers`: scan the target's followers list.",
             "",
         ]
 
@@ -1951,7 +2026,8 @@ async def run_scan_core(
     combo_names: str,
     game: str | None,
     effective_mode: str | None,
-    invoked_from_button: bool,
+    scan_source: str = "friends",
+    invoked_from_button: bool = False,
     previous_cumulative_size: int | None = None,
     only_show_new: bool = False,
     final_run: bool = True,
@@ -1966,6 +2042,8 @@ async def run_scan_core(
         scan_token = ACTIVE_SCAN_TOKENS.get(channel_id)
     raw_names = [c.strip() for c in combo_names.split(",") if c.strip()]
     lower_raw = [n.lower() for n in raw_names]
+
+    source_label = get_scan_source_label(scan_source)
 
     combos_disabled = False
     if len(lower_raw) == 1 and lower_raw[0] == "none":
@@ -2093,44 +2171,43 @@ async def run_scan_core(
 
     headshot_url = get_user_headshot_url(user_id)
     profile_url = f"https://www.roblox.com/users/{user_id}/profile"
+    source_label = get_scan_source_label(scan_source)
 
     try:
-        friends = get_friends(user_id)
+        accounts = get_relationship_users(user_id, scan_source)
     except requests.HTTPError as e:
-        # Some HTTPError instances don't have .response; fall back to string match.
         text = str(e)
         if "403" in text or "Forbidden" in text:
             msg = (
-                "Error fetching friends: Roblox Friends API returned **403 Forbidden** "
-                "for this user. Their friends list is not accessible via the public API."
+                f"Error fetching {source_label}: Roblox API returned **403 Forbidden** "
+                f"for this user's {source_label} list. It is not accessible via the public API."
             )
         else:
-            msg = f"Error fetching friends: `{e}`"
+            msg = f"Error fetching {source_label}: `{e}`"
         if invoked_from_button:
             await interaction.channel.send(msg)
         else:
             await interaction.followup.send(msg)
         return
     except Exception as e:
-        msg = f"Error fetching friends: `{e}`"
+        msg = f"Error fetching {source_label}: `{e}`"
         if invoked_from_button:
             await interaction.channel.send(msg)
         else:
             await interaction.followup.send(msg)
         return
 
-
-    total_friends = len(friends)
-    if total_friends == 0:
-        msg = "This user has no public friends (or none returned by the API)."
+    total_accounts = len(accounts)
+    if total_accounts == 0:
+        msg = f"This user has no public {source_label} (or none returned by the API)."
         if invoked_from_button:
             await interaction.channel.send(msg)
         else:
             await interaction.followup.send(msg)
         return
 
-    friend_ids = [f.get("id") for f in friends if isinstance(f.get("id"), int)]
-    presence_map, presence_err = get_presence_for_users([user_id] + friend_ids)
+    account_ids = [a.get("id") for a in accounts if isinstance(a.get("id"), int)]
+    presence_map, presence_err = get_presence_for_users([user_id] + account_ids)
     if presence_err:
         presence_rate_limited = True
 
@@ -2144,12 +2221,17 @@ async def run_scan_core(
         else "None (combo scan disabled)"
     )
 
+    # Build count label depending on scan_source
+    count_label = f"{source_label.capitalize()} returned by API"
+    if scan_source == "friends":
+        count_label += " (max 200)"
+
     desc_lines = [
         f"userId: `{user_id}`",
         f"[Profile link]({profile_url})",
         f"Account created: {join_text}",
         f"Presence: {target_presence_text}",
-        f"Friends returned by API (max 200): {total_friends}",
+        f"{count_label}: {total_accounts}",
         "",
         f"Match mode: {effective_mode}",
         "",
@@ -2170,7 +2252,7 @@ async def run_scan_core(
             desc_lines.append(f"- Bot badge target: {badge_target} badges")
 
     start_embed = discord.Embed(
-        title=f"Scanning {display_name_target} (@{username_target})'s friends",
+        title=f"Scanning {display_name_target} (@{username_target})'s {source_label}",
         description="\n".join(desc_lines),
         color=discord.Color.green(),
     )
@@ -2215,7 +2297,7 @@ async def run_scan_core(
 
     progress_msg = await scan_msg.channel.send(
         content=(
-            f"Checking friends (combos): 0/{total_friends} processed...\n"
+            f"Checking {source_label} (combos): 0/{total_accounts} processed...\n"
             f"{combos_part}"
         ),
         reference=None,
@@ -2226,11 +2308,11 @@ async def run_scan_core(
     combo_matches: list[dict] = []
     match_count = 0
 
-    for idx, friend in enumerate(friends, start=1):
+    for idx, account in enumerate(accounts, start=1):
         if scan_control.cancelled:
             return
 
-        friend_id = friend.get("id")
+        friend_id = account.get("id")
 
         try:
             if friend_id is None:
@@ -2254,10 +2336,10 @@ async def run_scan_core(
 
                 if not combo_matches_info:
                     await asyncio.sleep(AVATAR_REQUEST_DELAY)
-                    if idx % 25 == 0 or idx == total_friends:
+                    if idx % 25 == 0 or idx == total_accounts:
                         await progress_msg.edit(
                             content=(
-                                f"Checking friends (combos): {idx}/{total_friends} processed...\n"
+                                f"Checking {source_label} (combos): {idx}/{total_accounts} processed...\n"
                                 f"{combos_part} | Matches so far: {match_count}"
                             ),
                             view=cancel_view,
@@ -2310,10 +2392,10 @@ async def run_scan_core(
 
         await asyncio.sleep(AVATAR_REQUEST_DELAY)
 
-        if idx % 25 == 0 or idx == total_friends:
+        if idx % 25 == 0 or idx == total_accounts:
             await progress_msg.edit(
                 content=(
-                    f"Checking friends (combos): {idx}/{total_friends} processed...\n"
+                    f"Checking {source_label} (combos): {idx}/{total_accounts} processed...\n"
                     f"{combos_part} | Matches so far: {match_count}"
                 ),
                 view=cancel_view,
@@ -2324,9 +2406,9 @@ async def run_scan_core(
     if game_info and combo_matches:
         await progress_msg.edit(
             content=(
-                f"Checking friends (combos): {total_friends}/{total_friends} processed "
+                f"Checking {source_label} (combos): {total_accounts}/{total_accounts} processed "
                 f"({match_count} matches found).\n"
-                f"Now checking badges for {len(combo_matches)} matched friends: "
+                f"Now checking badges for {len(combo_matches)} matched accounts: "
                 f"0/{len(combo_matches)} processed..."
             ),
             view=cancel_view,
@@ -2441,7 +2523,7 @@ async def run_scan_core(
             if idx % 5 == 0 or idx == len(combo_matches):
                 await progress_msg.edit(
                     content=(
-                        f"Checking badges for {len(combo_matches)} matched friends: "
+                        f"Checking badges for {len(combo_matches)} matched accounts: "
                         f"{idx}/{len(combo_matches)} processed..."
                     ),
                     view=cancel_view,
@@ -2559,6 +2641,7 @@ async def run_scan_core(
         combo_names.lower(),
         (game.lower() if game else None),
         effective_mode,
+        scan_source,
     )
     prev_set = SCAN_CACHE.get(cache_key, set())
     old_set = set(prev_set)
@@ -2590,7 +2673,7 @@ async def run_scan_core(
     match_data_to_show = [m for m in match_data if m["user_id"] in cumulative_set]
 
     total_matches = len(match_data_to_show)
-    percentage = (total_matches / total_friends) * 100 if total_friends > 0 else 0.0
+    percentage = (total_matches / total_accounts) * 100 if total_accounts > 0 else 0.0
     quantity_likelihood = min(total_matches * 10.0, 100.0) if total_matches > 0 else 0.0
 
     if game_info and match_data_to_show:
@@ -2642,14 +2725,21 @@ async def run_scan_core(
         else "none (combo scan disabled)"
     )
 
+    source_summary = source_label.capitalize()
+    source_count_phrase = f"API-visible {source_label}"
+    source_note = ""
+    if scan_source == "friends":
+        source_note = "Note: Roblox friends API currently returns at most **200** friends."
+
     summary_lines = [
-        f"Friends of {display_name_target}, @{username_target} wearing ANY of combos: {combo_list_for_summary}",
+        f"{source_summary} of {display_name_target}, @{username_target} wearing ANY of combos: {combo_list_for_summary}",
         f"Match mode: {effective_mode}",
-        f"Matches in this output: **{total_matches}/{total_friends} ({percentage:.2f}% of API-visible friends, max 200)**",
+        f"Matches in this output: **{total_matches}/{total_accounts} ({percentage:.2f}% of {source_count_phrase})**",
         f"New unique matches this run: **{len(new_ids_this_run)}**",
         f"Total unique matches across runs for this config (cached): **{cumulative_count}**",
-        "Note: Roblox friends API currently returns at most **200** friends.",
     ]
+    if source_note:
+        summary_lines.append(source_note)
 
     if badge_api_failed and game_info:
         summary_lines.append(
@@ -2749,6 +2839,7 @@ async def run_scan_core(
         combo_names=combo_names,
         game=game,
         match_mode=effective_mode,
+        scan_source=scan_source,
     )
 
     summary_message = await scan_msg.channel.send(
@@ -2764,9 +2855,9 @@ async def run_scan_core(
             reference=None,
             mention_author=False,
             content=(
-                "No friends found wearing any of those combos."
+                f"No {source_label} found wearing any of those combos."
                 if not combos_disabled
-                else "Scan completed with combo filter disabled; no friends met the badge/game filters."
+                else f"Scan completed with combo filter disabled; no {source_label} met the badge/game filters."
             ),
         )
         return
@@ -2792,6 +2883,7 @@ async def run_scan_core(
         combo_names=combo_names,
         game_key=(game.lower() if game else None),
         match_mode=effective_mode,
+        scan_source=scan_source,
         target_username=username_target,
         target_display_name=display_name_target,
         per_page=3,
@@ -2808,6 +2900,7 @@ async def run_scan_core(
         combo_names,
         (game.lower() if game else None),
         effective_mode,
+        scan_source,
     )
 
     header_message = await scan_msg.channel.send(
@@ -2828,31 +2921,38 @@ async def run_scan_core(
 
 @rbi_group.command(
     name="scan",
-    description="Scan a Roblox user's friends for combos, optionally with badge stats for a game."
+    description="Scan a Roblox user's friends, following, or followers."
 )
 @app_commands.describe(
     roblox_username="Roblox username to scan",
     combo_names="Comma-separated combos (names, mycombos, globalcombos, all, none)",
     game="(Optional) game key (e.g. fisch or from /rbi mygames)",
-    match_mode="Exact = full outfit, Inexact = any overlap"
+    match_mode="Exact = full outfit, Inexact = any overlap",
+    scan_source="What relationship list to scan; defaults to Friends"
 )
-@app_commands.choices(match_mode=[
-    app_commands.Choice(name="Exact", value="exact"),
-    app_commands.Choice(name="Inexact", value="inexact"),
-])
+@app_commands.choices(
+    match_mode=[
+        app_commands.Choice(name="Exact", value="exact"),
+        app_commands.Choice(name="Inexact", value="inexact"),
+    ],
+    scan_source=[
+        app_commands.Choice(name="Friends", value="friends"),
+        app_commands.Choice(name="Following", value="following"),
+        app_commands.Choice(name="Followers", value="followers"),
+    ]
+)
 async def rbi_scan(
     interaction: discord.Interaction,
     roblox_username: str,
     combo_names: str,
     game: str | None = None,
     match_mode: app_commands.Choice[str] | None = None,
+    scan_source: app_commands.Choice[str] | None = None,
 ):
     await interaction.response.defer()
 
-    if match_mode is not None:
-        effective_mode = match_mode.value
-    else:
-        effective_mode = None
+    effective_mode = match_mode.value if match_mode is not None else None
+    resolved_scan_source = scan_source.value if scan_source is not None else "friends"
 
     channel_id = interaction.channel.id
     scan_token = uuid.uuid4().hex
@@ -2865,6 +2965,7 @@ async def rbi_scan(
         combo_names=combo_names,
         game=game,
         effective_mode=effective_mode,
+        scan_source=resolved_scan_source,
         invoked_from_button=False,
         previous_cumulative_size=None,
         only_show_new=False,
