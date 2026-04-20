@@ -1653,7 +1653,7 @@ class RBIHelpView(discord.ui.View):
             name="Version and links",
             value=(
                 f"- Current version: **{BOT_VERSION}**\n"
-                "- Last major scoring update: **04/11/2026**\n"
+                "- Last major scoring update: **04/20/2026**\n"
                 "- Source code / GitHub: **https://github.com/nitwi/Roblox-Bot-Investigator**"
             ),
             inline=False,
