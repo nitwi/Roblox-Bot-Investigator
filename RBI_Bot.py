@@ -1,4 +1,4 @@
-# RBI Bot v0.17.2-beta
+# RBI Bot v0.17.3-beta
 
 import os
 import time
@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.17.2 [Beta]"
+BOT_VERSION = "v0.17.3 [Beta]"
+UPDATED_DATE = "04/21/2026"
 
 # ------ CONFIG ------
 
@@ -1577,15 +1578,15 @@ class RBIHelpView(discord.ui.View):
             "`/rbi mycombos`",
             "`/rbi addgame key:<key> place_id:<id> [target_badges:<n>]`",
             "`/rbi mygames`",
-            "`/rbi scan roblox_username:<name> combo_names:<names|mycombos|globalcombos|all|none> "
-            "[game:<key>] [match_mode:<exact|inexact>] [scan_source:<friends|following|followers>]`",
+            "`/rbi scan roblox_username:<name> [combo_names:<names|mycombos|globalcombos|all|none>] "
+            "[game:<key|none>] [match_mode:<exact|inexact>] [scan_source:<friends|following|followers>]`",
             "`/rbi csvexport`",
             "`/rbi csvimport data:<single-line-from-export>`",
             "",
             "Special `combo_names` keywords:",
             "- `mycombos`: all combos you created",
             "- `globalcombos`: all global default combos",
-            "- `all`: mycombos + globalcombos",
+            "- `all`: mycombos + globalcombos (default if omitted)",
             "- `none`: disable combo filtering, scan all accounts in the selected scan source",
             "",
             "Preset import/export:",
@@ -1593,8 +1594,8 @@ class RBIHelpView(discord.ui.View):
             "- `csvimport`: paste that line back into `data` to restore presets.",
             "",
             "Match mode:",
-            "- `Exact`: account must wear all items in a combo.",
-            "- `Inexact`: account can wear any subset; embeds show X/Y items per combo.",
+            "- `Exact`: an account must wear all items in a combo.",
+            "- `Inexact`: an account can wear any subset; embeds show X/Y items per combo.",
             "",
             "Scan source:",
             "- `Friends`: scan the target's friends list (default).",
@@ -1620,7 +1621,7 @@ class RBIHelpView(discord.ui.View):
             description=(
                 "# RBI (Roblox Bot Investigator) estimates whether a Roblox account is likely "
                 "being fed by automation or bot farms.\n\n"
-                "It looks at outfits, badge patterns, usernames, and friend networks to spot "
+                "It looks at outfits, badge patterns, usernames, and relationship patterns to spot "
                 "accounts that behave more like bots than normal players."
             ),
             color=discord.Color.blurple(),
@@ -1642,7 +1643,7 @@ class RBIHelpView(discord.ui.View):
         embed.add_field(
             name="What the scores mean",
             value=(
-                "- **Per-friend badge likelihood**: How botted one friend looks in a specific game.\n"
+                "- **Per-account badge likelihood**: How botted one matched account looks in a specific game.\n"
                 "- **Sus Score**: How likely the target account is being fed by bots.\n"
                 "- Scores are signals, not bans; use them as a starting point for review."
             ),
@@ -1653,7 +1654,7 @@ class RBIHelpView(discord.ui.View):
             name="Version and links",
             value=(
                 f"- Current version: **{BOT_VERSION}**\n"
-                "- Last major scoring update: **04/20/2026**\n"
+                f"- Last major scoring update: **{UPDATED_DATE}**\n"
                 "- Source code / GitHub: **https://github.com/nitwi/Roblox-Bot-Investigator**"
             ),
             inline=False,
@@ -1677,26 +1678,25 @@ class RBIHelpView(discord.ui.View):
     def build_formulas_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="RBI Help – Formulas (page 3/3)",
-            description="# How RBI calculates friend percentage, per-friend badge likelihood, and Sus Score.",
+            description="# How RBI calculates match percentage, per-account badge likelihood, and Sus Score.",
             color=discord.Color.blurple(),
         )
 
-        # Friend percentage
         embed.add_field(
-            name="Friend percentage",
+            name="Match percentage",
             value=(
-                "Friends % = **matches / visible_friends × 100**\n"
-                "- **Matches**: how many of the target's friends wear one of the selected combos.\n"
-                "- **Visible friends**: how many friends Roblox returns (max 200 per user).\n"
+                "Match % = **matches / visible_accounts × 100**\n"
+                "- **Matches**: how many accounts in the selected scan source wear one of the selected combos.\n"
+                "- **Visible accounts**: how many accounts Roblox returns for the chosen scan source.\n"
+                "- For friends, Roblox currently returns at most 200 accounts through the public API.\n"
             ),
             inline=False,
         )
 
-        # Per-friend badge likelihood – plain English
         embed.add_field(
-            name="Per-friend badge likelihood (idea)",
+            name="Per-account badge likelihood (idea)",
             value=(
-                "- Count how many badges a friend has in total, and how many are from this game.\n"
+                "- Count how many badges a matched account has in total, and how many are from this game.\n"
                 "- If almost none of their badges are from this game (<5%), they count as **0% botted** for this game.\n"
                 "- Around the game’s target badge count (for example 8–12 when the target is 10), they’re treated as most suspicious (close to 100%).\n"
                 "- Far above the target (for example 20, 30, 40+), the score slowly falls back down towards 0% because that looks more like a real grinder.\n"
@@ -1704,9 +1704,8 @@ class RBIHelpView(discord.ui.View):
             inline=False,
         )
 
-        # Per-friend badge likelihood – exact steps
         embed.add_field(
-            name="Per-friend badge likelihood (math)",
+            name="Per-account badge likelihood (math)",
             value=(
                 "Let `T` = target badges, `gb` = game badges, `tb` = total badges, and `r = gb / tb`.\n"
                 "1. If `tb == 0` or `r < 0.05`, then `likelihood = 0`.\n"
@@ -1720,7 +1719,6 @@ class RBIHelpView(discord.ui.View):
             inline=False,
         )
 
-        # Ratio-based adjustment
         embed.add_field(
             name="Badge ratio adjustment",
             value=(
@@ -1734,11 +1732,10 @@ class RBIHelpView(discord.ui.View):
             inline=False,
         )
 
-        # Name match percentage
         embed.add_field(
             name="Name match percentage",
             value=(
-                "RBI compares the target username to each friend's username and display name.\n"
+                "RBI compares the target username to each matched account's username and display name.\n"
                 "Let `L` be the longest consecutive matching substring length.\n"
                 "Name match % = `(L / length_of_target_username) × 100`.\n"
                 "This only **adds** to bot likelihood; it never reduces it.\n"
@@ -1747,34 +1744,32 @@ class RBIHelpView(discord.ui.View):
             inline=False,
         )
 
-        # Name clusters
         embed.add_field(
             name="Name clusters (peer similarity)",
             value=(
-                "RBI also compares matched friends against each other.\n"
+                "RBI also compares matched accounts against each other.\n"
                 "Let `peer_threshold` be the minimum pairwise name similarity needed to count as a cluster match.\n"
-                "For each friend, `similar_friend_count` = number of other matched friends above that threshold.\n"
-                "Peer boost = `min(similar_friend_count × peer_weight, peer_cap)`.\n"
-                "That boost only increases Sus Score if the friend already has non-zero bot likelihood.\n"
+                "For each matched account, `similar_account_count` = number of other matched accounts above that threshold.\n"
+                "Peer boost = `min(similar_account_count × peer_weight, peer_cap)`.\n"
+                "That boost only increases Sus Score if the account already has non-zero bot likelihood.\n"
                 "Clustered names are labeled as `🧬[**<n>**]` in the paginator and plain-text output.\n"
             ),
             inline=False,
         )
 
-        # Sus Score
         embed.add_field(
             name="Sus Score",
             value=(
                 "Inputs:\n"
                 "- `Q = min(matches × 10, 100)`.\n"
-                "- Per-friend likelihoods `s_i`.\n"
-                "- Only friends with `s_i ≥ 25` count toward aggregation.\n"
-                "- `k =` number of matched friends with `s_i ≥ 25`.\n"
-                "- `n =` total matched friends.\n"
+                "- Per-account likelihoods `s_i`.\n"
+                "- Only matched accounts with `s_i ≥ 25` count toward aggregation.\n"
+                "- `k =` number of matched accounts with `s_i ≥ 25`.\n"
+                "- `n =` total matched accounts.\n"
                 "- `p = k / n`.\n"
                 "- `weights w_i = s_i / 100`.\n"
                 "- `avg_badge = (Σ(s_i × w_i)) / (Σ w_i)`.\n"
-                "- `k_red =` number of matched friends with `s_i ≥ 75`.\n\n"
+                "- `k_red =` number of matched accounts with `s_i ≥ 75`.\n\n"
                 "Formula:\n"
                 "1. `BaseSus = (Q + avg_badge) / 2`.\n"
                 "2. `boost = min(1 + 0.15 × (k_red^1.2), 2)`.\n"
@@ -2925,10 +2920,10 @@ async def run_scan_core(
 )
 @app_commands.describe(
     roblox_username="Roblox username to scan",
-    combo_names="Comma-separated combos (names, mycombos, globalcombos, all, none)",
-    game="(Optional) game key (e.g. fisch or from /rbi mygames)",
-    match_mode="Exact = full outfit, Inexact = any overlap",
-    scan_source="What relationship list to scan; defaults to Friends"
+    combo_names="Combos: names, mycombos, globalcombos, all, none (defaults to all)",
+    game="Game key: fisch, none (use none to disable badge/game scan; defaults to fisch)",
+    match_mode="Outfit Matching: exact, inexact (Exact = full outfit, Inexact = any overlap; defaults to Inexact)",
+    scan_source="Scan Source Pool: Friends, Following, Followers (defaults to Friends)"
 )
 @app_commands.choices(
     match_mode=[
@@ -2944,12 +2939,20 @@ async def run_scan_core(
 async def rbi_scan(
     interaction: discord.Interaction,
     roblox_username: str,
-    combo_names: str,
+    combo_names: str | None = None,
     game: str | None = None,
     match_mode: app_commands.Choice[str] | None = None,
     scan_source: app_commands.Choice[str] | None = None,
 ):
     await interaction.response.defer()
+
+    if combo_names is None or not combo_names.strip():
+        combo_names = "all"
+
+    if game is None or not game.strip():
+        game = "fisch"
+    elif game.strip().lower() == "none":
+        game = None
 
     effective_mode = match_mode.value if match_mode is not None else None
     resolved_scan_source = scan_source.value if scan_source is not None else "friends"
