@@ -2384,6 +2384,7 @@ async def run_scan_core(
                 "defaultcombos",
                 "xboxcombos",
                 "freeoutfitcombos",
+                "none",
             }
 
             for name in raw_names:
