@@ -1,4 +1,4 @@
-# RBI Bot v0.17.3-beta
+# RBI Bot
 
 import os
 import time
@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.17.3 [Beta]"
-UPDATED_DATE = "04/21/2026"
+BOT_VERSION = "v0.18.0 [Beta]"
+UPDATED_DATE = "04/22/2026"
 
 # ------ CONFIG ------
 
@@ -26,7 +26,60 @@ GLOBAL_COMBOS: dict[str, set[int]] = {
     "beanie": {382537569, 4047884939, 1772336109},
     "acorn": {62724852, 144076512, 144076436},
     "john": {301809996, 301811279, 301819845, 301820684},
+    "oakley": {301810204, 301811432, 301819935, 301820724},
     "greenbean": {617605556},
+    "claire": {301820599, 301819020},
+    "casey": {301819154, 301820642, 301809497, 301811027},
+    "lin": {301820310, 301818464, 301806786, 301810423},
+    "serena": {301818806, 301820523, 301807898, 301810602},
+    "junkbot": {12724232885, 4381832739, 4381828509, 4381823417, 4381821661, 4381819685, 4381817635, 4381815211},
+    "knightsofredcliff": {2493559059, 2493559856, 2493586650, 2493590711, 2493776828, 2493786076, 137831860413813},
+    "dennis": {11822635053, 4637596615, 4637601297, 4637254498},
+    "lindsey": {12945228337, 4637605284, 4637267557, 4637603462},
+    "denny": {128985581083096, 6445270994, 6445268819, 6445265102, 6445263379, 6445262286, 6445260402},
+    "linlin": {85216210917123, 6494077172, 6494056892, 6494055897, 6494055013, 6494053789, 6494051962},
+    "kenneth": {15093144795, 4637618900, 4637617396, 4637431811},
+    "oliver": {3963861732, 3963864909, 3963867514, 3963869770, 3963871432, 3963874672, 3670737444, 12778883791},
+    "cindy": {13253943097, 4637612548, 4637611578, 4637156063},
+    "citylifewoman": {15093243863, 2492675286, 2492674027, 2492670347, 2492669375, 2492671662, 2492667589},
+    "squadghoulstedd": {2499654059, 112187483939951, 2499646611, 2499646090, 2499645445, 2499644791, 2499643947},
+    "summer": {3963490791, 3670737444},
+}
+
+GLOBAL_COMBO_CATEGORIES: dict[str, list[str]] = {
+    # Original default avatars
+    "defaultcombos": [
+        "bacon",
+        "beanie",
+        "acorn",
+    ],
+
+    # New Xbox defaults
+    "xboxcombos": [
+        "john",
+        "oakley",
+        "claire",
+        "casey",
+        "lin",
+        "serena",
+    ],
+
+    # Free outfits (bundles, classic / neoclassic)
+    "freeoutfitcombos": [
+        "greenbean",
+        "junkbot",
+        "knightsofredcliff",
+        "dennis",
+        "lindsey",
+        "denny",
+        "linlin",
+        "kenneth",
+        "oliver",
+        "cindy",
+        "citylifewoman",
+        "squadghoulstedd",
+        "summer",
+    ],
 }
 
 GLOBAL_DESCRIPTIONS: dict[str, str] = {
@@ -34,7 +87,24 @@ GLOBAL_DESCRIPTIONS: dict[str, str] = {
     "beanie": "Beany (Default Genderless Account)",
     "acorn": "Acorn (Default Female Account)",
     "john": "John (Default XBOX Account)",
+    "oakley": "Oakley (Default XBOX Account)",
+    "claire": "Claire (Default XBOX Account)",
+    "casey": "Casey (Default XBOX Account)",
+    "lin": "Lin (Default XBOX Account)",
+    "serena": "Serena (Default XBOX Account)",
+    "dennis": "Dennis (Classic Male)",
+    "lindsey": "Lindsey (Classic Female)",
+    "kenneth": "Kenneth (NeoClassic Male)",
+    "cindy": "Cindy (NeoClassic Female)",
     "greenbean": "GreenBean (Grow A Garden Account)",
+    "junkbot": "Junk (Free Outfit)",
+    "knightsofredcliff": "Knights of Redcliff (Free Outfit)",
+    "denny": "Denny (Free Outfit)",
+    "linlin": "Linlin (Free Outfit)",
+    "oliver": "Oliver (Free Outfit)",
+    "citylifewoman": "City Life Woman (Free Outfit)",
+    "squadghoulstedd": "Squad Ghouls: Drop Dead Tedd (Free Outfit)",
+    "summer": "Summer (Free Outfit)",
 }
 
 GLOBAL_GAMES: dict[str, dict] = {
@@ -1518,6 +1588,82 @@ async def rbi_debugscan(interaction: discord.Interaction):
 
 # ------ HELP PAGINATION VIEW ------
 
+def chunk_lines_by_length(lines: list[str], max_len: int = 3800) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+
+    for line in lines:
+        piece = line if not current else "\n" + line
+        if len(current) + len(piece) > max_len:
+            if current:
+                chunks.append(current)
+            current = line
+        else:
+            current += piece
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+
+def format_combo_entry(name: str, ids: set[int], description: str | None = None) -> str:
+    if description:
+        return (
+            f"- `{name}` – {description}\n"
+            f"  IDs: {', '.join(str(i) for i in sorted(ids))}"
+        )
+    return (
+        f"- `{name}`\n"
+        f"  IDs: {', '.join(str(i) for i in sorted(ids))}"
+    )
+
+
+class MyCombosPaginator(discord.ui.View):
+    def __init__(self, invoker_id: int, pages: list[discord.Embed], timeout: float | None = 300):
+        super().__init__(timeout=timeout)
+        self.invoker_id = invoker_id
+        self.pages = pages
+        self.page_index = 0
+        self.message: discord.Message | None = None
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        self.prev_button.disabled = self.page_index <= 0
+        self.next_button.disabled = self.page_index >= len(self.pages) - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker_id:
+            await interaction.response.send_message(
+                "Only the user who ran `/rbi mycombos` can change pages.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
+
+    @discord.ui.button(label="Prev", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page_index > 0:
+            self.page_index -= 1
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=self.pages[self.page_index], view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.page_index < len(self.pages) - 1:
+            self.page_index += 1
+        self._sync_buttons()
+        await interaction.response.edit_message(embed=self.pages[self.page_index], view=self)
+
 class RBIHelpView(discord.ui.View):
 
     def _apply_button_styles(self):
@@ -1574,19 +1720,22 @@ class RBIHelpView(discord.ui.View):
             "",
             "`/rbi help`",
             "`/rbi ping`",
-            "`/rbi setcombo name:<name> ids:<id1 id2 ...>`",
+            "`/rbi addcombo name:<name> ids:<id1 id2 ...>`",
             "`/rbi mycombos`",
             "`/rbi addgame key:<key> place_id:<id> [target_badges:<n>]`",
             "`/rbi mygames`",
-            "`/rbi scan roblox_username:<name> [combo_names:<names|mycombos|globalcombos|all|none>] "
+            "`/rbi scan roblox_username:<name> [combo_names:<names|mycombos|globalcombos|defaultcombos|xboxcombos|freeoutfitcombos|all|none>] "
             "[game:<key|none>] [match_mode:<exact|inexact>] [scan_source:<friends|following|followers>]`",
             "`/rbi csvexport`",
             "`/rbi csvimport data:<single-line-from-export>`",
             "",
             "Special `combo_names` keywords:",
             "- `mycombos`: all combos you created",
-            "- `globalcombos`: all global default combos",
-            "- `all`: mycombos + globalcombos (default if omitted)",
+            "- `globalcombos`: all built-in global combos",
+            "- `defaultcombos`: built-in default male, female, and genderless combos",
+            "- `xboxcombos`: built-in default Xbox account combos",
+            "- `freeoutfitcombos`: built-in free outfit combos, including classic and neoclassic bundles",
+            "- `all`: mycombos + all global combo categories (default if omitted)",
             "- `none`: disable combo filtering, scan all accounts in the selected scan source",
             "",
             "Preset import/export:",
@@ -1821,30 +1970,76 @@ async def rbi_help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=about_embed, view=view)
     view.message = await interaction.original_response()
 
-@rbi_group.command(name="setcombo", description="Create or update a named combo for you.")
+@rbi_group.command(name="addcombo", description="Create a named combo for you.")
 @app_commands.describe(
-    name="Name for this combo (e.g. bacon_sus)",
-    ids="Accessory asset IDs separated by spaces (e.g. 111111 222222)"
+    name="Name for this combo, e.g. MyOutfit",
+    ids="Accessory asset IDs separated by spaces, e.g. 111111 222222"
 )
-async def rbi_setcombo(interaction: discord.Interaction, name: str, ids: str):
+async def rbiaddcombo(interaction: discord.Interaction, name: str, ids: str):
     parts = ids.split()
     if not parts:
         await interaction.response.send_message(
-            "You must provide at least one accessory asset ID.", ephemeral=True
+            "You must provide at least one accessory asset ID.",
+            ephemeral=True,
         )
         return
+
     try:
-        id_ints = {int(p) for p in parts}
+        idints = {int(p) for p in parts}
     except ValueError:
         await interaction.response.send_message(
-            "All IDs must be integers (numbers).", ephemeral=True
+            "All IDs must be integers (numbers).",
+            ephemeral=True,
         )
         return
+
     user_key = str(interaction.user.id)
-    combo_key = (user_key, name.lower())
-    USER_COMBOS[combo_key] = id_ints
+    lowered_name = name.strip().lower()
+
+    if not lowered_name:
+        await interaction.response.send_message(
+            "Combo name cannot be empty.",
+            ephemeral=True,
+        )
+        return
+
+    reserved_names = {
+        "all",
+        "none",
+        "mycombos",
+        "globalcombos",
+        "defaultcombos",
+        "xboxcombos",
+        "freeoutfitcombos",
+    }
+
+    if lowered_name in reserved_names:
+        await interaction.response.send_message(
+            f"You cannot use '{lowered_name}' because it is a reserved keyword.",
+            ephemeral=True,
+        )
+        return
+
+    if lowered_name in GLOBAL_COMBOS:
+        await interaction.response.send_message(
+            f"You cannot use '{lowered_name}' because it is already a global combo name.",
+            ephemeral=True,
+        )
+        return
+
+    combo_key = (user_key, lowered_name)
+    if combo_key in USER_COMBOS:
+        await interaction.response.send_message(
+            f"You already have a combo named '{lowered_name}'. Please use a different name.",
+            ephemeral=True,
+        )
+        return
+
+    USER_COMBOS[combo_key] = idints
+
     await interaction.response.send_message(
-        f"Combo `{name}` saved with IDs: {', '.join(str(i) for i in sorted(id_ints))}"
+        f"Combo '{lowered_name}' saved with IDs: {', '.join(str(i) for i in sorted(idints))}",
+        ephemeral=True,
     )
 
 @rbi_group.command(
@@ -1894,64 +2089,163 @@ async def rbi_addgame(
         ephemeral=True
     )
 
-@rbi_group.command(name="mycombos", description="Show your combos and global combos.")
-async def rbi_mycombos(interaction: discord.Interaction):
-    user_key = str(interaction.user.id)
 
-    embed = discord.Embed(
-        title="RBI – Combos",
-        description="Global combos first, then your personal combos.",
-        color=discord.Color.blurple(),
+def format_combo_entry(name: str, ids: set[int], description: str | None = None) -> str:
+    if description:
+        return (
+            f"- `{name}` – {description}\n"
+            f"  IDs: {', '.join(str(i) for i in sorted(ids))}"
+        )
+    return (
+        f"- `{name}`\n"
+        f"  IDs: {', '.join(str(i) for i in sorted(ids))}"
     )
 
-    # Global combos
-    if GLOBAL_COMBOS:
-        lines: list[str] = []
-        for key, ids in GLOBAL_COMBOS.items():
-            desc = GLOBAL_DESCRIPTIONS.get(key, key)
-            lines.append(
-                f"- `{key}` – {desc}\n"
-                f"  IDs: {', '.join(str(i) for i in sorted(ids))}"
-            )
-        embed.add_field(
-            name="Global combos",
-            value="\n".join(lines),
-            inline=False,
-        )
-    else:
-        embed.add_field(
-            name="Global combos",
-            value="No global combos are configured.",
-            inline=False,
-        )
+def chunk_lines_by_length(lines: list[str], limit: int = 1024) -> list[str]:
+    chunks: list[str] = []
+    current = ""
 
-    # User combos
+    for line in lines:
+        if len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+
+            while len(line) > limit:
+                split_at = line.rfind("\n", 0, limit)
+                if split_at == -1:
+                    split_at = line.rfind(", ", 0, limit)
+                if split_at == -1:
+                    split_at = limit
+
+                chunks.append(line[:split_at])
+                line = line[split_at:].lstrip("\n ,")
+
+            if line:
+                current = line
+            continue
+
+        candidate = line if not current else current + "\n" + line
+        if len(candidate) > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+
+    if current:
+        chunks.append(current)
+
+    return chunks
+
+def build_mycombos_pages(user_id: int) -> list[discord.Embed]:
+    user_key = str(user_id)
+    pages: list[discord.Embed] = []
+
+    category_display_names = {
+        "defaultcombos": "Default combos",
+        "xboxcombos": "XBOX combos",
+        "freeoutfitcombos": "Free Outfit combos",
+    }
+
+    for category_key in ("defaultcombos", "xboxcombos", "freeoutfitcombos"):
+        combo_names = GLOBAL_COMBO_CATEGORIES.get(category_key, [])
+
+        # Category-level debug
+        if category_key == "freeoutfitcombos":
+            print("[DEBUG] freeoutfitcombos raw:", combo_names)
+
+        lines: list[str] = []
+
+        # INNER LOOP: add per-combo debug here
+        for combo_name in combo_names:
+            ids = GLOBAL_COMBOS.get(combo_name, set())
+            desc = GLOBAL_DESCRIPTIONS.get(combo_name, combo_name)
+
+            if category_key == "freeoutfitcombos":
+                print(
+                    f"[DEBUG] freeoutfitcombos combo_name={combo_name} "
+                    f"ids={sorted(ids) if ids else 'EMPTY'} desc={desc!r}"
+                )
+
+            if ids:
+                lines.append(format_combo_entry(combo_name, ids, desc))
+
+        if not lines:
+            lines = ["No combos in this category."]
+
+        chunks = chunk_lines_by_length(lines)
+        total_chunks = len(chunks)
+
+        for idx, chunk in enumerate(chunks, start=1):
+            category_name = category_display_names[category_key]
+            desc_text = (
+                category_name
+                if total_chunks == 1
+                else f"{category_name} ({idx}/{total_chunks})"
+            )
+
+            emb = discord.Embed(
+                title="RBI - Combos",
+                description=f"{desc_text}\n\n{chunk}",
+                color=discord.Color.blurple(),
+            )
+            pages.append(emb)
+
     user_entries = [
         (name, ids)
         for (uid, name), ids in USER_COMBOS.items()
         if uid == user_key
     ]
-    if user_entries:
-        lines: list[str] = []
-        for name, ids in user_entries:
-            lines.append(
-                f"- `{name}`\n"
-                f"  IDs: {', '.join(str(i) for i in sorted(ids))}"
-            )
-        embed.add_field(
-            name="Your combos",
-            value="\n".join(lines),
-            inline=False,
-        )
-    else:
-        embed.add_field(
-            name="Your combos",
-            value="You have not created any combos yet.",
-            inline=False,
-        )
 
-    embed.set_footer(text=f"Bot version: {BOT_VERSION}")
-    await interaction.response.send_message(embed=embed)
+    if user_entries:
+        user_lines = [
+            format_combo_entry(name, ids)
+            for name, ids in sorted(user_entries, key=lambda x: x[0])
+        ]
+
+        chunks = chunk_lines_by_length(user_lines)
+        total_chunks = len(chunks)
+
+        for idx, chunk in enumerate(chunks, start=1):
+            desc_text = (
+                "Your personal combos"
+                if total_chunks == 1
+                else f"Your personal combos ({idx}/{total_chunks})"
+            )
+
+            emb = discord.Embed(
+                title="RBI - Combos",
+                description=f"{desc_text}\n\n{chunk}",
+                color=discord.Color.blurple(),
+            )
+            pages.append(emb)
+    else:
+        emb = discord.Embed(
+            title="RBI - Combos",
+            description="Your personal combos\n\nYou have not created any combos yet.",
+            color=discord.Color.blurple(),
+        )
+        pages.append(emb)
+
+    total_pages = len(pages)
+    for i, emb in enumerate(pages, start=1):
+        emb.set_footer(text=f"Page {i}/{total_pages} • Bot version: {BOT_VERSION}")
+
+    for i, emb in enumerate(pages, start=1):
+        desc_len = len(emb.description or "")
+        print(f"[DEBUG] page={i} description_len={desc_len}")
+        if desc_len > 4096:
+            raise ValueError(f"Page {i} description exceeds 4096 chars: {desc_len}")
+
+    return pages
+
+@rbi_group.command(name="mycombos", description="Show your combos and global combo categories.")
+async def rbi_mycombos(interaction: discord.Interaction):
+    pages = build_mycombos_pages(interaction.user.id)
+    view = MyCombosPaginator(invoker_id=interaction.user.id, pages=pages)
+
+    await interaction.response.send_message(embed=pages[0], view=view)
+    view.message = await interaction.original_response()
 
 @rbi_group.command(name="mygames", description="Show games you have saved for badge scanning.")
 async def rbi_mygames(interaction: discord.Interaction):
@@ -2064,6 +2358,10 @@ async def run_scan_core(
             for gname in GLOBAL_COMBOS.keys():
                 expanded_names.append(gname)
 
+        def add_global_category(category_key: str):
+            for gname in GLOBAL_COMBO_CATEGORIES.get(category_key, []):
+                expanded_names.append(gname)
+
         if "all" in lower_raw:
             add_my_combos()
             add_global_combos()
@@ -2072,8 +2370,24 @@ async def run_scan_core(
                 add_my_combos()
             if "globalcombos" in lower_raw:
                 add_global_combos()
+            if "defaultcombos" in lower_raw:
+                add_global_category("defaultcombos")
+            if "xboxcombos" in lower_raw:
+                add_global_category("xboxcombos")
+            if "freeoutfitcombos" in lower_raw:
+                add_global_category("freeoutfitcombos")
+
+            special_keywords = {
+                "all",
+                "mycombos",
+                "globalcombos",
+                "defaultcombos",
+                "xboxcombos",
+                "freeoutfitcombos",
+            }
+
             for name in raw_names:
-                if name.lower() not in {"all", "mycombos", "globalcombos"}:
+                if name.lower() not in special_keywords:
                     expanded_names.append(name)
 
         seen = set()
@@ -2082,7 +2396,8 @@ async def run_scan_core(
         if not expanded_names:
             await interaction.channel.send(
                 "No combos resolved from combo_names. "
-                "Use explicit names, `mycombos`, `globalcombos`, `all`, or `none`."
+                "Use explicit names, `mycombos`, `globalcombos`, "
+                "`defaultcombos`, `xboxcombos`, `freeoutfitcombos`, `all`, or `none`."
             )
             return
 
