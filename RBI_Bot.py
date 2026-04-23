@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.18.0 [Beta]"
+BOT_VERSION = "v0.18.1 [Beta]"
 UPDATED_DATE = "04/22/2026"
 
 # ------ CONFIG ------
@@ -2546,7 +2546,7 @@ async def run_scan_core(
         f"Match mode: {effective_mode}",
         "",
         "**Combos being scanned:**",
-        combo_text,
+        combo_names.strip() if combo_names and combo_names.strip() else "all",
         "",
         f"Bot version: {BOT_VERSION}",
     ]
@@ -2593,10 +2593,15 @@ async def run_scan_core(
         scan_msg = _ScanMsgLike(interaction.channel)
 
     combos_part = (
-        f"Combos: {', '.join(expanded_names)}"
-        if expanded_names
-        else "Combos: none (combo filter disabled)"
+        f"Combos: {combo_names.strip()}"
+        if combo_names and combo_names.strip()
+        else "Combos: all"
     )
+
+    print(f"[DEBUG] combo_names raw={combo_names!r}")
+    print(f"[DEBUG] expanded_names count={len(expanded_names)}")
+    print(f"[DEBUG] combos_part length={len(combos_part)}")
+    print(f"[DEBUG] combos_part={combos_part!r}")
 
     scan_control = ScanControl()
     cancel_view = ScanCancelView(
@@ -3235,7 +3240,7 @@ async def run_scan_core(
 )
 @app_commands.describe(
     roblox_username="Roblox username to scan",
-    combo_names="Combos: names, mycombos, globalcombos, all, none (defaults to all)",
+    combo_names="Combos: names, mycombos, globalcombos, defaultcombos, xboxcombos, freeoutfitcombos, all, none (defaults to all)",
     game="Game key: fisch, none (use none to disable badge/game scan; defaults to fisch)",
     match_mode="Outfit Matching: exact, inexact (Exact = full outfit, Inexact = any overlap; defaults to Inexact)",
     scan_source="Scan Source Pool: Friends, Following, Followers (defaults to Friends)"
