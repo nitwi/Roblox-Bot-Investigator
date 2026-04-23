@@ -1,4 +1,4 @@
-# RBI Bot
+# Roblox Bot Investigator
 
 import os
 import time
