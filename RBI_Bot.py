@@ -14,8 +14,8 @@ from datetime import datetime, timezone
 load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
-BOT_VERSION = "v0.18.1.1 [Beta]"
-UPDATED_DATE = "04/22/2026"
+BOT_VERSION = "v0.19.0 [Beta]"
+UPDATED_DATE = "05/06/2026"
 
 # ------ CONFIG ------
 
@@ -136,6 +136,13 @@ USERNAME_TO_ID_API = "https://users.roblox.com/v1/usernames/users"
 USER_BADGES_API = "https://badges.roblox.com/v1/users/{userId}/badges"
 PLACE_TO_UNIVERSE_API = "https://apis.roblox.com/universes/v1/places/{placeId}/universe"
 
+OPEN_CLOUD_INVENTORY_API = (
+    "https://apis.roblox.com/cloud/v2/users/{userId}/inventory-items"
+)
+ROBLOX_OPEN_CLOUD_API_KEY = os.getenv("ROBLOX_OPEN_CLOUD_API_KEY")
+
+LEGACY_USER_BADGES_API = "https://badges.roblox.com/v1/users/{userId}/badges"
+
 GAME_ICONS_API = (
     "https://thumbnails.roblox.com/v1/games/icons"
     "?universeIds={universeId}&size=256x256&format=Png&isCircular=false"
@@ -149,6 +156,13 @@ PRESENCE_API = "https://presence.roblox.com/v1/presence/users"
 
 # Cache of seen user IDs per (user, target, combos, game, match_mode, scan_source)
 SCAN_CACHE: dict[tuple[int, str, str, str | None, str, str], set[int]] = {}
+
+def get_open_cloud_headers() -> dict[str, str]:
+    if not ROBLOX_OPEN_CLOUD_API_KEY:
+        raise RuntimeError("ROBLOX_OPEN_CLOUD_API_KEY is not set")
+    return {
+        "x-api-key": ROBLOX_OPEN_CLOUD_API_KEY,
+    }
 
 # ------ PER-CHANNEL ACTIVE SCAN / RESCAN STATE ------
 
@@ -182,6 +196,7 @@ async def on_ready():
     print(f"RBI Bot version: {BOT_VERSION}")
     print("[DEBUG] Commands in tree:", [c.name for c in client.tree.walk_commands()])
     print("Slash commands are ready.")
+    print("ROBLOX_OPEN_CLOUD_API_KEY loaded:", bool(ROBLOX_OPEN_CLOUD_API_KEY))
 
 # ------ ROBLOX HELPERS ------
 
@@ -339,7 +354,77 @@ def place_to_universe(place_id: int) -> int | None:
     except Exception:
         return None
 
-def get_user_badges(user_id: int, max_pages: int | None = None) -> list[dict]:
+def get_user_badges(user_id: int, max_pages: int | None = None) -> tuple[list[dict] | None, str | None]:
+    # Prefer Open Cloud Inventory API for badges.
+    # Fall back to legacy badges API if no Open Cloud key is configured.
+    if ROBLOX_OPEN_CLOUD_API_KEY:
+        print(f"[DEBUG] Using Open Cloud inventory for user {user_id}")
+        badges: list[dict] = []
+        page_token: str | None = None
+        pages_fetched = 0
+
+        while True:
+            params = {
+                "maxPageSize": 1000,
+                "filter": "badges=true",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+
+            url = OPEN_CLOUD_INVENTORY_API.format(userId=user_id)
+
+            try:
+                r = requests.get(
+                    url,
+                    params=params,
+                    headers=get_open_cloud_headers(),
+                    timeout=15,
+                )
+                print(f"[DEBUG] Open Cloud status for user {user_id}: {r.status_code}")
+            except Exception as e:
+                return None, f"open cloud request error: {e}"
+
+            if r.status_code != 200:
+                try:
+                    body_preview = r.text[:300]
+                except Exception:
+                    body_preview = "<unable to read body>"
+                return None, f"open cloud http {r.status_code}: {body_preview}"
+
+            try:
+                data = r.json()
+            except Exception as e:
+                return None, f"open cloud json error: {e}"
+
+            items = data.get("inventoryItems", [])
+            for item in items:
+                badge_id = (
+                    item.get("item", {}).get("id")
+                    or item.get("assetId")
+                    or item.get("id")
+                )
+                if isinstance(badge_id, int):
+                    badges.append({"id": badge_id})
+                else:
+                    try:
+                        badge_id = int(badge_id)
+                        badges.append({"id": badge_id})
+                    except Exception:
+                        pass
+
+            page_token = data.get("nextPageToken")
+            pages_fetched += 1
+
+            if not page_token:
+                break
+            if max_pages is not None and pages_fetched >= max_pages:
+                break
+
+            time.sleep(BADGE_REQUEST_DELAY)
+
+        return badges, None
+
+    # Legacy fallback
     badges: list[dict] = []
     cursor: str | None = None
     pages_fetched = 0
@@ -348,20 +433,39 @@ def get_user_badges(user_id: int, max_pages: int | None = None) -> list[dict]:
         params = {"limit": 100, "sortOrder": "Asc"}
         if cursor:
             params["cursor"] = cursor
-        url = USER_BADGES_API.format(userId=user_id)
-        r = requests.get(url, params=params, timeout=10)
+
+        url = LEGACY_USER_BADGES_API.format(userId=user_id)
+
+        try:
+            r = requests.get(url, params=params, timeout=10)
+        except Exception as e:
+            return None, f"legacy request error: {e}"
+
         if r.status_code != 200:
-            break
-        data = r.json()
-        badges.extend(data.get("data", []))
+            try:
+                body_preview = r.text[:300]
+            except Exception:
+                body_preview = "<unable to read body>"
+            return None, f"legacy http {r.status_code}: {body_preview}"
+
+        try:
+            data = r.json()
+        except Exception as e:
+            return None, f"legacy json error: {e}"
+
+        page_data = data.get("data", [])
+        badges.extend(page_data)
         cursor = data.get("nextPageCursor")
         pages_fetched += 1
+
         if not cursor:
             break
         if max_pages is not None and pages_fetched >= max_pages:
             break
+
         time.sleep(BADGE_REQUEST_DELAY)
-    return badges
+
+    return badges, None
 
 def get_universe_badge_ids(universe_id: int, max_pages: int | None = None) -> set[int]:
     badge_ids: set[int] = set()
@@ -721,8 +825,13 @@ def sus_square(sus: float) -> str:
 
 def build_friend_embed(m: dict, game_info: dict | None) -> discord.Embed:
     if game_info is not None:
-        if m["total_badges"] == 0:
-            badge_summary = "No badges."
+        if not m.get("badge_data_available", True):
+            badge_summary = (
+                "Badge data unavailable.\n"
+                f"Reason: {m.get('badge_fetch_error', 'unknown error')}"
+            )
+        elif m["total_badges"] == 0:
+            badge_summary = "No badges returned."
         else:
             badge_summary = (
                 f"Badges: {m['total_badges']}\n"
@@ -998,12 +1107,17 @@ class ResultsPaginator(discord.ui.View):
                         '   Combo detail: ' + '; '.join(m['combo_match_detail'])
                     )
                 if self.game_info is not None:
-                    lines.append(
-                        f"   Badges: total {m['total_badges']}, "
-                        f"game {m['game_badges']} "
-                        f"({m['pct']:.2f}% of badges from this game), "
-                        f"bot likelihood: {sus:.2f}%"
-                    )
+                    if not m.get("badge_data_available", True):
+                        lines.append(
+                            f"   Badge data unavailable: {m.get('badge_fetch_error', 'unknown error')}"
+                        )
+                    else:
+                        lines.append(
+                            f"   Badges: total {m['total_badges']}, "
+                            f"game {m['game_badges']} "
+                            f"({m['pct']:.2f}% of badges from this game), "
+                            f"bot likelihood: {sus:.2f}%"
+                        )
                 lines.append("")
 
 
@@ -2742,20 +2856,33 @@ async def run_scan_core(
             game_badges = 0
             pct_of_total = 0.0
             badge_likelihood = 0.0
+            badge_data_available = True
+            badge_fetch_error = None
 
-            try:
-                badges = get_user_badges(uid, max_pages=None)
+            badges, badge_err = get_user_badges(uid, max_pages=None)
+
+            print(f"[BADGE DEBUG] uid={uid} badge_err={badge_err}")
+
+            if badges is None:
+                print(f"[BADGE DEBUG] uid={uid} badges=None")
+            else:
+                print(f"[BADGE DEBUG] uid={uid} badge_count={len(badges)} sample={badges[:3]}")
+
+            if badge_err is not None:
+                badge_data_available = False
+                badge_fetch_error = badge_err
+                badge_api_failed = True
+            else:
+                badges = badges or []
                 total_badges = len(badges)
                 game_badges = count_badges_for_universe(badges, universe_badge_ids)
+
                 if total_badges > 0:
                     pct_of_total = (game_badges / total_badges) * 100.0
-
-                badge_likelihood = 0.0
 
                 if badge_target and badge_target > 0:
                     T = float(badge_target)
 
-                    # Core band: ±20% around target
                     low = round(0.8 * T)
                     high = round(1.2 * T)
                     if low < 1:
@@ -2763,15 +2890,12 @@ async def run_scan_core(
                     if high <= low:
                         high = low + 1
 
-                    # Far-legit cutoff based on target (e.g. 4× target)
-                    legit_factor = 4.0   # T=10 -> cutoff ~40
-                    upper_zero = int(round(legit_factor * T))
+                    upper_zero = int(round(4.0 * T))
                     if upper_zero <= high:
                         upper_zero = high + (high - low)
 
                     gb = game_badges
 
-                    # 1) Base likelihood from badge count shape
                     if gb <= 0:
                         raw_likelihood = 0.0
                     elif gb < low:
@@ -2779,50 +2903,36 @@ async def run_scan_core(
                     elif gb <= high:
                         raw_likelihood = 100.0
                     elif gb < upper_zero:
-                        # Exponential decay from 100 at high -> ~0 at upper_zero
-                        x = (gb - high) / (upper_zero - high)  # 0..1
-                        base = 0.4  # 0.4 gives moderate decay
-                        decay = base ** x
-                        raw_likelihood = 100.0 * decay
+                        x = (gb - high) / (upper_zero - high)
+                        raw_likelihood = 100.0 * (0.4 ** x)
                     else:
                         raw_likelihood = 0.0
 
-                badge_likelihood = raw_likelihood
+                    badge_likelihood = raw_likelihood
 
-                # 2) Ratio-based modulation ONLY when above target
-                if gb > T and total_badges > 0 and raw_likelihood > 0.0:
-                    ratio = game_badges / total_badges  # 0..1
+                    if gb > T and total_badges > 0 and raw_likelihood > 0.0:
+                        ratio = game_badges / total_badges
 
-                    # Tuned for exploit alts like 22/30 (~0.73):
-                    # - ratio <= 0.2 -> strong damping (0.2x)
-                    # - ratio >= 0.6 -> almost full strength (0.9x)
-                    # - in between -> smoothly interpolate
-                    if ratio <= 0.2:
-                        ratio_factor = 0.2  # was 0.3
-                    elif ratio >= 0.6:
-                        ratio_factor = 0.9
-                    else:
-                        t = (ratio - 0.2) / (0.6 - 0.2)
-                        ratio_factor = 0.2 + t * (0.9 - 0.2)
+                        if ratio <= 0.2:
+                            ratio_factor = 0.2
+                        elif ratio >= 0.6:
+                            ratio_factor = 0.9
+                        else:
+                            t = (ratio - 0.2) / 0.4
+                            ratio_factor = 0.2 + t * 0.7
 
-                    badge_likelihood *= ratio_factor
+                        badge_likelihood *= ratio_factor
 
-                # 3) Name match percentage boost (only adds)
-                nm_pct = m.get("name_match_pct", 0.0) or 0.0
-                if nm_pct > 0.0 and badge_likelihood > 0.0:
-                    add_amount = min(nm_pct, 100.0) * 0.5
-                    badge_likelihood += add_amount
+                    nm_pct = m.get("name_match_pct", 0.0) or 0.0
+                    if nm_pct > 0.0 and badge_likelihood > 0.0:
+                        add_amount = min(nm_pct, 100.0) * 0.5
+                        badge_likelihood += add_amount
+
                     if badge_likelihood > 100.0:
                         badge_likelihood = 100.0
 
-                # Coverage rule: if <5% of their badges are from this game, treat as 0.
-                if pct_of_total < 5.0:
-                    badge_likelihood = 0.0
-
-            except Exception:
-                pass
-
-
+                    if total_badges > 0 and pct_of_total < 5.0:
+                        badge_likelihood = 0.0
 
             m_enriched = dict(m)
             m_enriched.update(
@@ -2831,6 +2941,8 @@ async def run_scan_core(
                     "game_badges": game_badges,
                     "pct": pct_of_total,
                     "sus_score": badge_likelihood,
+                    "badge_data_available": badge_data_available,
+                    "badge_fetch_error": badge_fetch_error,
                 }
             )
             enriched_matches.append(m_enriched)
